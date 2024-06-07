@@ -1,0 +1,93 @@
+[data-type="bible-version-view"] > .view-content {
+  padding: 0px;
+  
+  .nav-header .search-row {
+    margin: 0px;
+  }
+  .search-input-container {
+    width: 100%;
+  }
+}
+
+.bible-version-plugin {
+  padding: 8px 16px 12px;
+  overflow: auto;
+
+  :is(.pbv-info, .pbv-intro, .pbv-none, .pbv-button) {
+    margin: 16px 0 8px;
+  }
+
+  :is(.pbv-look-up, .pbv-title) {
+    margin-bottom: 8px;
+  }
+
+  .pbv-title {
+    color: var(--color-purple);
+    font-size: 1.1em;
+    counter-reset: part 0;
+    font-family: var(--font-text);
+  }
+  
+  .pbv-intro {
+    color: var(--text-muted);
+    margin-top: 16px;
+    a {
+      font-size: var(--font-smaller);
+    }
+  }
+  
+  .pbv-source {
+    color: var(--text-faint);
+    font-size: var(--font-smaller);
+    margin-left: 1.2em;
+  }
+  
+  .pbv-button {
+    color: var(--text-muted);
+    width: 100%;
+    &:hover {
+      color: var(--text-normal);
+      background-color: var(--background-modifier-active-hover);
+    }
+  }
+  
+  .pbv-message {
+    color: var(--text-muted);
+    margin-bottom: 2em;
+  }
+  
+  .pbv-none {
+    color: var(--text-faint);
+    text-decoration: line-through;
+  }
+
+  .pbv-row {
+    color: var(--text-muted);
+    margin: 4px 0 8px;
+    padding: 2px 0;
+    user-select: text !important;
+    -webkit-user-select: text !important;
+  }
+
+  :is(.pbv-text, .pbv-ver) {
+    display: inline-block;
+  }
+
+  .pbv-text {
+    color: var(--text-normal);
+    font-family: var(--font-text);
+    padding: 0px 8px 0px 8px;
+  }
+
+  .pbv-ver {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    padding: 4px 0px;
+    &::before {
+      counter-increment: part 1;
+      content: counter(part);
+      font-weight: bolder;
+    }
+  }
+}
+

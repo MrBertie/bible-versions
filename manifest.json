@@ -1,0 +1,11 @@
+{
+	"id"           : "bible-versions",
+	"name"         : "Bible Versions",
+	"version"      : "0.1.0",
+	"minAppVersion": "1.0.0",
+	"description"  : "Display parallel bible versions from BibleGateway.com for the selected scripture reference.",
+	"author"       : "MrBertie",
+	"authorUrl"    : "https://github.com/MrBertie/bible-versions",
+	"fundingUrl"   : "https://github.com/MrBertie/bible-versions",
+	"isDesktopOnly": false
+}

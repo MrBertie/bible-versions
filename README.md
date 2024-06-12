@@ -19,6 +19,6 @@ You can also type the scripture reference into the search box directly and press
 
 > Most of the common scripture reference abbreviations and styles are recognised.  For example: `Rom 1:20; Psalm 89:18; 1 Cor 9:26; 1Jo 2:15-17`
 
-**Reset search.**  Click to the clear search box cross to reset the display.
+**Reset search.**  Click to the clear search box `x` to reset the display.
 
 **Copying the result.**  Click on a verse text in the sidebar to copy it to the clipboard.

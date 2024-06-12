@@ -8,7 +8,7 @@ Display parallel bible versions for the selected scripture reference.
  *  @typedef {import('jwl.d.ts').api} api 
  */
 
-const { Plugin, ItemView, setTooltip, requestUrl, Notice } = require('obsidian');
+const { Plugin, ItemView, setTooltip, setIcon, requestUrl, Notice, View } = require('obsidian');
 
 const BIBLE_VERSION_VIEW = 'bible-version-view';
 
@@ -24,13 +24,16 @@ const Lang = {
   clearTip: 'Clear search',
   introHdr: 'Bible Versions',
   intro: 'Show parallel Bible versions for a scripture reference.',
-  source: 'Source: <a href="https://www.biblegateway.com/">BibleGateway</a>',
+  source: 'Sourced from <a href="https://www.biblegateway.com/">BibleGateway</a>',
   invalidScripture: 'The scripture reference is not a valid Bible verse',
   noResult: 'Could not find a matching scripture',
   noEditor: 'No active editor',
   searching: 'Searching for parallel versions from Bible Gateway...',
-  searchPlc: 'Enter a scripture reference...',
-  selected: 'Find scripture at the cursor',
+  searchPlc: 'Find scripture reference...',
+  findCursorTip: 'Find scripture at cursor',
+  findCursorTxt: 'Click the button beside the search box to find the word at the cursor position',
+  copyVerseTxt: 'Click verse text in any version to copy it to the clipboard',
+  verseCopiedMsg: 'The verse text was copied to the clipboard',
 };
 
 class BibleVersionPlugin extends Plugin {
@@ -72,6 +75,7 @@ class BibleVersionPlugin extends Plugin {
 class BibleVersionView extends ItemView {
   constructor(leaf) {
     super(leaf);
+    this.cache = {};
 
     /** @type {api} */
     this.jwl = this.app.plugins.plugins['jwl-linker']?.api;
@@ -93,8 +97,7 @@ class BibleVersionView extends ItemView {
     this.contentEl.empty();
 
     // SEARCH BAR
-    const nav = this.contentEl.createDiv({ cls: 'nav-header'});
-    const row = nav.createDiv({ cls: 'search-row' });
+    const row = createDiv({ cls: 'search-row' });
     const cont = row.createDiv({ cls: 'search-input-container' });
     const search_box = cont.createEl('input', {
       type: 'search',
@@ -104,19 +107,28 @@ class BibleVersionView extends ItemView {
       cls: 'search-input-clear-button',
     });
     setTooltip(search_clear, Lang.clearTip);
+    const cursorBtn = row.createDiv({ cls: 'clickable-icon pbv-cursor-icon' });
+    setIcon(cursorBtn, 'text-cursor-input');
+    setTooltip(cursorBtn, Lang.findCursorTip, { placement: 'bottom' });
+    cursorBtn.onclick = () => {
+      const view = this.app.workspace.getMostRecentLeaf().view;
+      const lookup = this.scriptureFromCursor(view);
+      show_results(lookup);
+    };
+    this.containerEl.prepend(row);  // place at top to ensure it stays fixed
 
     // PLUGIN CONTAINER
-    const content = this.contentEl.createDiv({ cls: 'bible-version-plugin' });
+    const content = this.contentEl;
+    content.empty();
+    content.addClass('pbv');
 
     // START VIEW
     const start_view = content.createDiv();
-    start_view.createDiv({ text: Lang.introHdr.toUpperCase(), cls: 'pbv-title' });
     start_view.createDiv({ text: Lang.intro, cls: 'pbv-intro' });
-    start_view.createDiv({ cls: 'pbv-source' }).innerHTML = Lang.source;
-    const selected_btn = start_view.createEl('button', {
-      text: Lang.selected,
-      cls: 'pbv-button',
-    });
+    const helpEl = start_view.createEl('ul', { cls: 'pbv-help '});
+    helpEl.createEl('li', { text: Lang.findCursorTxt });
+    helpEl.createEl('li', { text: Lang.copyVerseTxt });
+    helpEl.createEl('li').innerHTML = Lang.source;
 
     // RESULTS VIEWS
     const searching_view = content.createDiv({
@@ -125,44 +137,49 @@ class BibleVersionView extends ItemView {
     });
     searching_view.hide();
 
-    const result_view = content.createDiv();
+    const result_view = content.createDiv({ cls: 'pbv-results' });
 
-    // EVENTS
-    // ******
+    /* EVENTS */
+
+    const show_results = showResults.bind(this);
 
     search_box.onsearch = () => {
-      const lookup = Lib.scriptureFromSearch(search_box.value, this.jwl);
-      showResults(lookup);
-    };
-
-    selected_btn.onclick = () => {
-      const view = this.app.workspace.getMostRecentLeaf().view;
-      const lookup = Lib.scriptureFromCursor(view, this.jwl);
-      showResults(lookup);
+      const lookup = this.scriptureFromSearch(search_box.value);
+      show_results(lookup);
     };
 
     search_clear.onclick = () => {
+      search_box.removeClass('pbv-active-verse');
       search_box.value = '';
       result_view.empty();
       start_view.show();
     };
 
+    result_view.onclick = (evt) => {
+      if (evt.target.className === 'pbv-text') {
+        navigator.clipboard.writeText(evt.target.textContent + 
+          '\n*' + evt.target.previousSibling.textContent.trim() + '*');
+        new Notice(Lang.verseCopiedMsg, 2000);
+      }
+    }
+
     /**
      * Display the verse list in the sidebar
      * Signals invalid verses
+     * ⚠️ Needs to be bound to 'this'
      * 
-     * @param {string} lookup Must be a full , valid scripture reference
+     * @param {string} lookup Must be a full, valid scripture reference
      */
     function showResults(lookup) {
       if (lookup !== '') {
         search_box.value = lookup;
+        search_box.addClass('pbv-active-verse');
         start_view.hide();
         searching_view.show();
-        Lib.fetchBibleVersions(lookup).then((results) => {
+        this.fetchBibleVersions(lookup).then((results) => {
           searching_view.hide();
           result_view.empty();
           if (results !== undefined) {
-            result_view.createDiv({ text: lookup.toUpperCase(), cls: 'pbv-title' });
             results.forEach(({ version, text }) => {
               const row = result_view.createDiv({ cls: 'pbv-row' });
               row.createSpan({ text: version, cls: 'pbv-ver' });
@@ -182,18 +199,16 @@ class BibleVersionView extends ItemView {
   async onClose() {
     this.unload();
   }
-}
 
-/**
- * Static local function library
- */
-class Lib {
+  /* ⚒️ INTERNAL FUNCTIONS */
+
   /**
    * Fetch the bible versions for the input scripture
    * @param {string} lookup Scripture, must be full and valid!
    * @returns {array|null} innerHTML of each version of the verse
    */
-  static async fetchBibleVersions(lookup) {
+  async fetchBibleVersions(lookup) {
+    if (lookup in this.cache) return this.cache[lookup];
     const url = Config.url + lookup;
     let result = [];
     try {
@@ -205,6 +220,7 @@ class Lib {
         versions.forEach((elem) => {
           result.push(this.extractPlainText(elem.innerHTML));
         });
+        this.cache[lookup] = result;
         return result;
       }
     } catch (error) {
@@ -221,7 +237,7 @@ class Lib {
    * @param {string} html html markup
    * @returns {{version, text}} bible version name, full text of verse
    */
-  static extractPlainText(html) {
+  extractPlainText(html) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     let version = doc.body.childNodes[0].textContent ?? '';
     version = Config.sep1 + version + Config.sep2 + BibleVersions[version] ?? '';
@@ -237,10 +253,10 @@ class Lib {
    * @param {api} api jwl-linker api
    * @returns {string} empty if no match
    */
-  static scriptureFromSearch(input, api) {
-    const match = api.matchPotentialScriptures(input)[0] ?? null;
+  scriptureFromSearch(input) {
+    const match = this.jwl.matchPotentialScriptures(input)[0] ?? null;
     if (match) {
-      const result = api.validateScripture(match, api.DisplayType.first);
+      const result = this.jwl.validateScripture(match, api.DisplayType.first);
       return result.display;
     } else {
       return '';
@@ -254,7 +270,7 @@ class Lib {
    * @param {api} jwl jwl-linker api
    * @returns {string} empty if no match
    */
-  static scriptureFromCursor(active_view, jwl) {
+  scriptureFromCursor(active_view) {
     let result; 
     let lookup = '';
     if (active_view) {
@@ -267,12 +283,12 @@ class Lib {
       const end = loc + offset > line.length ? line.length : loc + offset;
       loc -= begin;
       const fragment = line.slice(begin, end);
-      const matches = jwl.matchPotentialScriptures(fragment);
+      const matches = this.jwl.matchPotentialScriptures(fragment);
       if (matches.length) {
         for (const match of matches) {
           // Is the cursor within or at the end of this scripture?
           if (loc >= match.begin && loc <= match.end) {
-            result = jwl.validateScripture(match, jwl.DisplayType.first);
+            result = this.jwl.validateScripture(match, this.jwl.DisplayType.first);
             lookup = result.display;
             break;
           }

@@ -1,45 +1,67 @@
-[data-type="bible-version-view"] > .view-content {
-  padding: 0px;
-  
-  .nav-header .search-row {
-    margin: 0px;
-  }
-  .search-input-container {
+[data-type="bible-version-view"] {
+  .search-row .search-input-container {
     width: 100%;
+  }
+  .pbv-active-verse {
+    font-size: var(--font-ui-medium);
+    color: var(--text-accent);
+    border-color: var(--background-modifier-border-focus);
+  }
+  .pbv-cursor-icon {
+    width: 40px;
+    &:hover {
+      background-color: var(--background-modifier-active-hover);
+      border: 1px solid var(--background-modifier-border-hover);
+    }
   }
 }
 
-.bible-version-plugin {
-  padding: 8px 16px 12px;
-  overflow: auto;
+.pbv {
+  padding: 4px 16px 32px !important;
 
-  :is(.pbv-info, .pbv-intro, .pbv-none, .pbv-button) {
+  :is(.pbv-info, .pbv-none) {
     margin: 16px 0 8px;
   }
 
-  :is(.pbv-look-up, .pbv-title) {
+  .pbv-look-up {
     margin-bottom: 8px;
+  }
+
+  .pbv-results {
+    counter-reset: part 0;
+    max-height: inherit;
   }
 
   .pbv-title {
     color: var(--color-purple);
     font-size: 1.1em;
-    counter-reset: part 0;
-    font-family: var(--font-text);
   }
   
   .pbv-intro {
     color: var(--text-muted);
-    margin-top: 16px;
-    a {
+    margin-bottom: 8px;
+  }
+
+  ul.pbv-help {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 8px;
+    padding-inline-start: 1.8em;
+    li {
+      color: var(--text-muted);
       font-size: var(--font-smaller);
+      padding: 4px;
+    }
+    li span {
+      height: 12px !important;
+      margin-left: 8px;
     }
   }
   
   .pbv-source {
     color: var(--text-faint);
     font-size: var(--font-smaller);
-    margin-left: 1.2em;
+    margin: 4px 0 8px 0.5em;
   }
   
   .pbv-button {
@@ -63,7 +85,7 @@
 
   .pbv-row {
     color: var(--text-muted);
-    margin: 4px 0 8px;
+    margin: 4px 0 6px;
     padding: 2px 0;
     user-select: text !important;
     -webkit-user-select: text !important;
@@ -76,13 +98,18 @@
   .pbv-text {
     color: var(--text-normal);
     font-family: var(--font-text);
-    padding: 0px 8px 0px 8px;
+    padding: 2px 8px 2px 8px;
+    &:hover {
+      color: var(--text-normal);
+      background: var(--background-modifier-active-hover);
+      border-radius: 4px;
+    }
   }
 
   .pbv-ver {
     color: var(--text-muted);
     font-size: var(--font-ui-smaller);
-    padding: 4px 0px;
+    padding: 4px 0 2px;
     &::before {
       counter-increment: part 1;
       content: counter(part);

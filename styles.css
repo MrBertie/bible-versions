@@ -1,119 +1,146 @@
-[data-type="bible-version-view"] {
+[data-type="synonym-view"] {
   .search-row .search-input-container {
     width: 100%;
   }
-  .pbv-active-verse {
+  .syn-active-word {
     font-size: var(--font-ui-medium);
     color: var(--text-accent);
     border-color: var(--background-modifier-border-focus);
   }
-  .pbv-cursor-icon {
-    width: 40px;
+  .syn-cursor-icon {
+    width: 50px;
     &:hover {
+      color: var(--text-normal);
       background-color: var(--background-modifier-active-hover);
       border: 1px solid var(--background-modifier-border-hover);
     }
   }
 }
 
-.pbv {
+.syn {
   padding: 4px 16px 32px !important;
 
-  :is(.pbv-info, .pbv-none) {
+  :is(.syn-heading, .syn-info, .syn-none) {
     margin: 16px 0 8px;
   }
 
-  .pbv-look-up {
-    margin-bottom: 8px;
+  .syn-history {
+    margin: 4px 0 20px;
+    span {
+      color: var(--text-muted);
+      font-size: var(--font-ui-smaller);
+      padding: 6px 8px 6px 8px;
+    }
   }
 
-  .pbv-results {
-    counter-reset: part 0;
-    max-height: inherit;
-  }
-
-  .pbv-title {
-    color: var(--color-purple);
-    font-size: 1.1em;
-  }
-  
-  .pbv-intro {
-    color: var(--text-muted);
-    margin-bottom: 8px;
-  }
-
-  ul.pbv-help {
+  .syn-help {
     border: 1px solid var(--background-modifier-border);
     border-radius: 4px;
-    padding: 8px;
-    padding-inline-start: 1.8em;
-    li {
-      color: var(--text-muted);
-      font-size: var(--font-smaller);
-      padding: 4px;
-    }
-    li span {
-      height: 12px !important;
-      margin-left: 8px;
-    }
-  }
-  
-  .pbv-source {
-    color: var(--text-faint);
-    font-size: var(--font-smaller);
-    margin: 4px 0 8px 0.5em;
-  }
-  
-  .pbv-button {
     color: var(--text-muted);
-    width: 100%;
+    font-size: var(--font-smaller);
+    padding: 8px;
+    padding-left: 12px;
+    ul {
+      margin: 4px 0px;
+      padding-inline-start: 1.8em;
+      li {
+        color: var(--text-muted);
+        list-style-position: outside;
+        padding: 4px 0px;
+      }
+    }
+    .clear-history:hover {
+      color: var(--text-normal);
+    }
+  }
+  
+  .syn-show-help {
+    border-top: 1px solid var(--background-modifier-border);
+    color: var(--text-muted);
+    padding: 8px;
     &:hover {
       color: var(--text-normal);
-      background-color: var(--background-modifier-active-hover);
     }
   }
-  
-  .pbv-message {
-    color: var(--text-muted);
-    margin-bottom: 2em;
-  }
-  
-  .pbv-none {
-    color: var(--text-faint);
-    text-decoration: line-through;
-  }
 
-  .pbv-row {
-    color: var(--text-muted);
-    margin: 4px 0 6px;
-    padding: 2px 0;
+  :is(.syn-definition, .syn-example) {
+    margin: 4px 0 8px;
     user-select: text !important;
     -webkit-user-select: text !important;
   }
 
-  :is(.pbv-text, .pbv-ver) {
+  .syn-results {
+    margin-bottom: 1.3em;
+    max-height: inherit;
+  }
+  
+  .syn-searching {
+    color: var(--text-muted);
+    margin-bottom: 2em;
+    white-space: pre-line;
+  }
+
+  .syn-heading {
+    color: var(--color-orange);
+    counter-reset: part 0;
+    font-family: var(--font-interface);
+    span {
+      padding: 0 8px;
+      --icon-size: var(--icon-l);
+      --icon-stroke: var(--icon-l-stroke-width);
+    }
+    &:first-of-type {
+      margin-top: 0px;
+    }
+  }
+  
+  :is(.syn-word, .syn-history span) {
     display: inline-block;
   }
 
-  .pbv-text {
-    color: var(--text-normal);
-    font-family: var(--font-text);
-    padding: 2px 8px 2px 8px;
+  .syn-word {
+    color: var(--text-muted);
+    display: inline-block;
+    padding: 4px 8px 6px;
+  }
+
+  .syn-more {
+    color: var(--text-muted);
+    height: 28px;
+    margin-left: 8px;
+  }
+  
+  :is(.syn-word, .syn-more, .syn-definition, .syn-definition:before, .syn-history span) {
     &:hover {
       color: var(--text-normal);
       background: var(--background-modifier-active-hover);
       border-radius: 4px;
     }
   }
-
-  .pbv-ver {
+  .syn-definition {
     color: var(--text-muted);
-    font-size: var(--font-ui-smaller);
-    padding: 4px 0 2px;
+    counter-increment: part 1;
+    margin-left: 1em;
+    padding: 2px;
+    text-indent: -1em;
     &::before {
-      counter-increment: part 1;
-      content: counter(part);
-      font-weight: bolder;
+      content: counter(part) ". ";
+    }
+  }
+
+  .syn-example {
+    color: var(--text-faint);
+    font-size: var(--font-smaller);
+    margin-left: 1.25em;
+  }
+
+  .syn-none {
+    color: var(--text-faint);
+    &:after {
+      content: "None";
+      font-size: 0.7em;
+      margin-left: 0.5em;
+      vertical-align: super;
     }
   }
 }

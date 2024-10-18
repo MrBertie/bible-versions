@@ -1,88 +1,118 @@
 /*
-Parallel Bible Versions Plugin
+Synonyms Plugin
 ===============
-Display parallel bible versions for the selected scripture reference.
+Show a list of synonyms for the current word in the editor in the right sidebar. Click to insert.
 */
 
-/** External api from jwl-linker
- *  @typedef {import('jwl.d.ts').api} api 
- */
+const { Plugin, ItemView, setTooltip, setIcon, requestUrl, Notice } = require('obsidian');
 
-const { Plugin, ItemView, setTooltip, setIcon, requestUrl, Notice, View } = require('obsidian');
-
-const BIBLE_VERSION_VIEW = 'bible-version-view';
+const SYNONYM_VIEW = 'synonym-view';
 
 const Config = {
-  url: 'https://www.biblegateway.com/verse/en/',
-  sep1: ' | ',
-  sep2: ' • ',
-  delay: 3000,
+  maxResults: 20, // limit of how many words per heading to return
+  maxWords: 10, // limit to selection size, max no. of words
+  dictUrl: 'https://en.wiktionary.org/api/rest_v1/page/definition/',
+  synUrl: 'https://api.datamuse.com/words?',
+  synonymArg: 'rel_syn=',
+  antonymArg: 'rel_ant=',
+  similarArg: 'ml=',
 };
 
 const Lang = {
-  name: 'Bible Versions',
+  name: 'Synonyms',
+  introHdr: 'Synonyms',
+  synonymsHdr: 'Synonyms',
+  antonymsHdr: 'Antonyms',
+  similarHdr: 'Similar meanings',
+  definitionsHdr: 'Definitions',
+  definitionCopied: 'Word definition copied to clipboard',
   clearTip: 'Clear search',
-  introHdr: 'Bible Versions',
-  intro: 'Show parallel Bible versions for a scripture reference.',
-  source: 'Sourced from <a href="https://www.biblegateway.com/">BibleGateway</a>',
-  invalidScripture: 'The scripture reference is not a valid Bible verse',
-  noResult: 'Could not find a matching scripture',
-  noEditor: 'No active editor',
-  searching: 'Searching for parallel versions from Bible Gateway...',
-  searchPlc: 'Find scripture reference...',
-  findCursorTip: 'Find scripture at cursor',
+  intro: 'Find synonyms, antonyms, similar meanings, and dictionary definitions.',
+  source1: 'Synonyms from <a href="https://api.datamuse.com/words?rel_syn=example">Datamuse</a>',
+  source2: 'Dictionary from <a href="https://en.wiktionary.org/api/rest_v1/page/definition/example">Wiktionary</a>',
+  more: ' more...',
+  searchingSyn: 'Searching for synonyms from Datamuse...',
+  searchingDef: 'Searching for definitions from Wiktionary...',
+  searchPlc: 'Find synonyms, antonyms, & definitions....',
+  findCursorTip: 'Find word at cursor',
   findCursorTxt: 'Click the button beside the search box to find the word at the cursor position',
-  copyVerseTxt: 'Click verse text in any version to copy it to the clipboard',
-  verseCopiedMsg: 'The verse text was copied to the clipboard',
+  hideTip: 'Click to hide',
+  insertWordTxt: 'Click a synonym, antonym, or similar meaning to replace the word at the cursor',
+  copyDefinitionTxt: 'Click a dictionary definition to copy it to the clipboard',
+  clearTxt: 'Click here to clear the search history.',
+  expandHelp: 'Help…',
 };
 
-class BibleVersionPlugin extends Plugin {
+const DEFAULT_SETTINGS = {
+  maxHistory: 25,
+}
+
+class SynonymSidebarPlugin extends Plugin {
   constructor() {
     super(...arguments);
   }
 
   async onload() {
+    await this.loadSettings();
+
     this.registerView(
-      BIBLE_VERSION_VIEW, 
-      (leaf) => (this.view = new BibleVersionView(leaf)),
+      SYNONYM_VIEW, 
+      (leaf) => (this.view = new SynonymSidebarView(leaf, this)),
     );
 
-    this.app.workspace.onLayoutReady(this.activateView.bind(this));
+    this.addCommand({
+      id: 'synonym-open',
+      name: 'Open sidebar',
+      callback: this.activateView.bind(this),
+    });
 
+    //this.app.workspace.onLayoutReady(this.activateView.bind(this));
+    
     console.log('%c' + this.manifest.name + ' ' + this.manifest.version +
-      ' loaded', 'background-color: royalblue; padding:4px; border-radius:4px');
+      ' loaded', 'background-color: firebrick; padding:4px; border-radius:4px');
+  }
+  
+  onunload() {}
+  
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
   }
 
-  onunload() {}
+  async saveSettings() {
+    await this.saveData(this.settings);
+  }
 
   async activateView() {
     const { workspace } = this.app;
-    const [leaf] = workspace.getLeavesOfType(BIBLE_VERSION_VIEW);
+    let leaf = workspace.getLeavesOfType(SYNONYM_VIEW).first();
     if (!leaf) {
-      await this.app.workspace
-        .getRightLeaf(false) // false = no split
-        .setViewState({
-          type: BIBLE_VERSION_VIEW,
+      leaf = workspace.getRightLeaf(false); // false => no split
+      await leaf.setViewState({
+          type: SYNONYM_VIEW,
           active: true,
         });
     }
-    if (leaf) {
-      workspace.revealLeaf(leaf);
-    }
+    workspace.revealLeaf(leaf);
   }
 }
 
-class BibleVersionView extends ItemView {
-  constructor(leaf) {
+class SynonymSidebarView extends ItemView {
+  constructor(leaf, plugin) {
     super(leaf);
-    this.cache = {};
-
-    /** @type {api} */
-    this.jwl = this.app.plugins.plugins['jwl-linker']?.api;
+    this.plugin = plugin;
+    this.settings = plugin.settings;
+    this.synonymCache = {};
+    this.definitionCache = {};
+    this.searchboxEl;
+    this.historyEl;
+    this.history = [];
+    this.helpEl;
+    this.expandHelpEl;
+    this.helpExpanded = true;
   }
 
   getViewType() {
-    return BIBLE_VERSION_VIEW;
+    return SYNONYM_VIEW;
   }
 
   getDisplayText() {
@@ -90,109 +120,248 @@ class BibleVersionView extends ItemView {
   }
 
   getIcon() {
-    return 'library';
+    return 'book-a';
+  }
+
+  // Update state from workspace
+  async setState(state, result) {
+    if (state.lookup) {
+      this.searchboxEl.value = state.lookup;
+    }
+    this.history = state.history ?? [];
+    this.showHistory();
+    this.expandHelp(state.help ?? true);
+    await super.setState(state, result);
+  }
+
+  // Save state to workspace
+  getState() {
+    let state = super.getState();
+    state.lookup = this.searchboxEl.value;
+    state.history = this.history;
+    state.help = this.helpExpanded;
+    return state;
   }
 
   async onOpen() {
-    this.contentEl.empty();
-
+    let lookup = '';
+    let resultCache = [];
+    
     // SEARCH BAR
-    const row = createDiv({ cls: 'search-row' });
-    const cont = row.createDiv({ cls: 'search-input-container' });
-    const search_box = cont.createEl('input', {
+    const rowEl = createDiv({ cls: 'search-row' });
+    const contEl = rowEl.createDiv({ cls: 'search-input-container' });
+    const searchboxEl = contEl.createEl('input', {
       type: 'search',
       placeholder: Lang.searchPlc,
     });
-    const search_clear = cont.createDiv({
+    this.searchboxEl = searchboxEl;
+    const clearEl = contEl.createDiv( {
       cls: 'search-input-clear-button',
     });
-    setTooltip(search_clear, Lang.clearTip);
-    const cursorBtn = row.createDiv({ cls: 'clickable-icon pbv-cursor-icon' });
+    setTooltip(clearEl, Lang.clearTip);
+    const cursorBtn = rowEl.createDiv({ cls: 'clickable-icon syn-cursor-icon' });
     setIcon(cursorBtn, 'text-cursor-input');
     setTooltip(cursorBtn, Lang.findCursorTip, { placement: 'bottom' });
     cursorBtn.onclick = () => {
-      const view = this.app.workspace.getMostRecentLeaf().view;
-      const lookup = this.scriptureFromCursor(view);
-      show_results(lookup);
+      searchboxEl.value = this.currentWord(this.app);
+      searchboxEl.onsearch();
     };
-    this.containerEl.prepend(row);  // place at top to ensure it stays fixed
-
+    this.containerEl.prepend(rowEl);  // place at top to ensure it stays fixed
+        
     // PLUGIN CONTAINER
-    const content = this.contentEl;
-    content.empty();
-    content.addClass('pbv');
+    this.contentEl.empty();
+    this.contentEl.addClass('syn');
 
     // START VIEW
-    const start_view = content.createDiv();
-    start_view.createDiv({ text: Lang.intro, cls: 'pbv-intro' });
-    const helpEl = start_view.createEl('ul', { cls: 'pbv-help '});
-    helpEl.createEl('li', { text: Lang.findCursorTxt });
-    helpEl.createEl('li', { text: Lang.copyVerseTxt });
-    helpEl.createEl('li').innerHTML = Lang.source;
+    const introEl = this.contentEl.createDiv();
 
-    // RESULTS VIEWS
-    const searching_view = content.createDiv({
-      text: Lang.searching,
-      cls: 'pbv-message',
+    const historyEl = introEl.createEl('div', { cls: 'syn-history'});
+    this.historyEl = historyEl;
+   
+    const expandHelpEl = introEl.createEl('div', { cls: 'syn-show-help' });
+    setIcon(expandHelpEl, 'help');
+    setTooltip(expandHelpEl, Lang.expandHelp, { placement: 'left' });
+    this.expandHelpEl = expandHelpEl;
+
+    const helpEl = introEl.createDiv({ text: Lang.intro, cls: 'syn-help'});
+    const listEl = helpEl.createEl('ul');
+    listEl.createEl('li', { text: Lang.findCursorTxt });
+    listEl.createEl('li', { text: Lang.insertWordTxt });
+    listEl.createEl('li', { text: Lang.copyDefinitionTxt });
+    const wipeEl = listEl.createEl('li', { text: Lang.clearTxt , cls: 'clear-history' });
+    listEl.createEl('li').innerHTML = Lang.source1;
+    listEl.createEl('li').innerHTML = Lang.source2;
+    setTooltip(helpEl, Lang.hideTip);
+    this.helpEl = helpEl;
+
+    this.expandHelp(this.helpExpanded);
+
+    // SYNONYM VIEW
+    const searchingEl = this.contentEl.createDiv({
+      text: Lang.searchingSyn,
+      cls: 'syn-searching',
     });
-    searching_view.hide();
+    searchingEl.hide();
 
-    const result_view = content.createDiv({ cls: 'pbv-results' });
+    const synonymEl = this.contentEl.createDiv({ cls: 'syn-results'});
 
-    /* EVENTS */
+    // DEFINITION VIEW
+    const searchingDefEl = this.contentEl.createDiv({
+      text: Lang.searchingDef,
+      cls: 'syn-searching',
+    });
+    searchingDefEl.hide();
 
-    const show_results = showResults.bind(this);
+    const definitionEl = this.contentEl.createDiv({ cls: 'syn-results'});
 
-    search_box.onsearch = () => {
-      const lookup = this.scriptureFromSearch(search_box.value);
-      show_results(lookup);
+    // *** EVENTS ****
+
+    searchboxEl.onsearch = () => {
+      lookup = searchboxEl.value;
+      searchboxEl.addClass('syn-active-word');
+      if (lookup !== '') {
+        introEl.hide();
+        searchingEl.show();
+        this.fetchSynonyms(lookup).then((results) => {
+          searchingEl.hide();
+          showSynonyms(results, synonymEl);
+          resultCache = results; // needed for the 'More..' button feature
+        });
+        searchingDefEl.show();
+        this.fetchDefinitions(lookup).then((word) => {
+          searchingDefEl.hide();
+          showDefinitions(word, definitionEl);
+          showFiller(definitionEl);
+        });
+        this.addToHistory(lookup);
+        this.showHistory();
+      }
     };
 
-    search_clear.onclick = () => {
-      search_box.removeClass('pbv-active-verse');
-      search_box.value = '';
-      result_view.empty();
-      start_view.show();
+    clearEl.onclick = (event) => {
+      searchboxEl.removeClass('syn-active-word');
+      searchboxEl.value = '';
+      synonymEl.empty();
+      definitionEl.empty();
+      introEl.show();
     };
 
-    result_view.onclick = (evt) => {
-      if (evt.target.className === 'pbv-text') {
-        navigator.clipboard.writeText(evt.target.textContent + 
-          '\n*' + evt.target.previousSibling.textContent.trim() + '*');
-        new Notice(Lang.verseCopiedMsg, 2000);
+    historyEl.onclick = (event) => {
+      if (event.target.tagName === 'SPAN') {
+        searchboxEl.value = event.target.textContent;
+        searchboxEl.onsearch();
+      }
+    }
+
+    wipeEl.onclick = () => {
+      this.clearHistory();
+      clearEl.onclick();
+    }
+
+    /**
+     * Replace editor selection with clicked synonym
+     * Lookup the currently selected word in the editor
+     * @param {event} event
+     */
+    synonymEl.onclick = (event) => {
+      if (event.target.className === 'syn-word') {
+        const word = event.target.textContent;
+        this.currentWord(this.app, word);
+      }
+      if (event.target.className === 'syn-more') {
+        showSynonyms(resultCache, synonymEl, true);
+      }
+    }
+
+    definitionEl.onclick = (event) => {
+      if (event.target.className === 'syn-definition') {
+        navigator.clipboard.writeText('*' + searchboxEl.value + '* 🔅' + event.target.textContent);
+        new Notice(Lang.definitionCopied, 2000);
+      }
+    }
+
+    expandHelpEl.onclick = () => {
+      this.expandHelp(true);
+    }
+
+    helpEl.onclick = () => {
+      this.expandHelp(false);
+    }
+    
+    // RENDER functions
+    // ****************
+
+    /**
+     * Render the datamuse json results to HTML
+     * @param {Array<SynonymResult>} results list of synonyms, antonyms and similar words
+     * @param {HTMLElement} showEl where to show the results
+     * @param {boolean} all show all results?
+     */
+    function showSynonyms(results, showEl, all = false) {
+      showEl.empty();
+      for (const result of results) {
+        const heading = result.Heading.toUpperCase();
+        const len = result.Words.length;
+        if (len > 0) {
+          showEl.createDiv({ text: heading, cls: 'syn-heading' });
+          const end = all ? len : Config.maxResults;
+          result.Words.slice(0, end).map((word) => {
+            showEl.createSpan( { text: word.word, cls: 'syn-word' });
+          });
+        } else {
+          showEl.createDiv({ text: heading, cls: 'syn-none syn-heading' });
+        }
+        if (!all && len > Config.maxResults) {
+          const more = len - Config.maxResults;
+          showEl.createEl('button', { text: more + Lang.more, cls: 'syn-more' });
+        }
       }
     }
 
     /**
-     * Display the verse list in the sidebar
-     * Signals invalid verses
-     * ⚠️ Needs to be bound to 'this'
-     * 
-     * @param {string} lookup Must be a full, valid scripture reference
+     * Render the word definitions from Wiktionary to HTML
+     * @param {JSON} definition
+     * @param {HTMLElement} showEl where to show the results
      */
-    function showResults(lookup) {
-      if (lookup !== '') {
-        search_box.value = lookup;
-        search_box.addClass('pbv-active-verse');
-        start_view.hide();
-        searching_view.show();
-        this.fetchBibleVersions(lookup).then((results) => {
-          searching_view.hide();
-          result_view.empty();
-          if (results !== undefined) {
-            results.forEach(({ version, text }) => {
-              const row = result_view.createDiv({ cls: 'pbv-row' });
-              row.createSpan({ text: version, cls: 'pbv-ver' });
-              row.createSpan({ text: text, cls: 'pbv-text' });
+    function showDefinitions(definition, showEl) {
+      showEl.empty();
+      if (definition) {
+        showEl.createDiv({ text: Lang.definitionsHdr.toUpperCase(), cls: 'syn-heading' });
+        definition.forEach((part) => {
+          const partEl = showEl.createDiv({ text: part.partOfSpeech, cls: 'syn-heading' });
+          part.definitions.forEach((def) => {
+            partEl.createDiv({
+              text: stripMarkup(def.definition),
+              cls: 'syn-definition',
             });
-            result_view.createDiv({ text: '🔹' });
-          } else {
-            result_view.createDiv({ text: Lang.noResult, cls: 'pbv-none' });
-          }
+            if (def.examples !== undefined) {
+              def.examples.forEach((example) => {
+                partEl.createDiv({
+                  text: '“' + stripMarkup(example) + '”',
+                  cls: 'syn-example',
+                });
+              });
+            }
+          });
         });
       } else {
-        new Notice(Lang.invalidScripture, Config.delay);
+        showEl.createDiv({ text: Lang.definitionsHdr.toUpperCase(), cls: 'syn-none' });
       }
+    }
+
+        /**
+     * Remove html markup from text
+     * @param {string} html html markup
+     * @returns {string} plain text
+     */
+    function stripMarkup(html) {
+      let doc = new DOMParser().parseFromString(html, 'text/html');
+      let text = doc.body.textContent ?? '';
+      return text;
+    }
+
+    function showFiller(view) {
+      view.createDiv({ text: '🔅', cls: 'syn-searching' });
     }
   }
 
@@ -200,173 +369,153 @@ class BibleVersionView extends ItemView {
     this.unload();
   }
 
-  /* ⚒️ INTERNAL FUNCTIONS */
+  /* INTERNAL FUNCTIONS */
+
+  expandHelp(isExpanded) {
+    if (isExpanded) {
+      this.expandHelpEl.hide();
+      this.helpEl.show();
+    } else {
+      this.helpEl.hide();
+      this.expandHelpEl.show();
+    }
+    this.helpExpanded = isExpanded;
+  }
+
+  showHistory() {
+    this.historyEl.empty();
+    this.history.forEach((item) => {
+      this.historyEl.createEl('span', { text: item });
+    });
+  }
+
+  clearHistory() {
+    this.history = [];
+    this.getState();
+    this.showHistory();
+  }
+
+  addToHistory(lookup) {
+    this.history = this.history.filter(item => item !== lookup); // no duplicates
+    this.history = [lookup, ...this.history]; // add to the top
+    if (this.history.length > this.settings.maxHistory) {
+      this.history = this.history.slice(0, this.settings.maxHistory);
+    }
+  }
 
   /**
-   * Fetch the bible versions for the input scripture
-   * @param {string} lookup Scripture, must be full and valid!
-   * @returns {array|null} innerHTML of each version of the verse
+   * Get / Set the editor selection
+   * In the most recent editor, grabs either:
+   * 1. The selected text (up to max number of words); 
+   *    NOTE: paragraphs of words make no sense in this context
+   * 2. The word at the cursor position
+   *
+   * @param {obsidian.App} app
+   * @param {string} replacement
+   * @returns {string}
    */
-  async fetchBibleVersions(lookup) {
-    if (lookup in this.cache) return this.cache[lookup];
-    const url = Config.url + lookup;
-    let result = [];
+  currentWord(app, replacement = '') {
+    const view = app.workspace.getMostRecentLeaf().view;
+    if (view) {
+      const editor = view.editor;
+      // If there is no selection try to use the word at the cursor position
+      if (!editor.somethingSelected()) {
+        selectWordAtCursor(editor);
+      }
+      if (editor.somethingSelected) {
+        if (replacement !== '') {
+          editor.replaceSelection(replacement);
+          selectWordAtCursor(editor);
+        } else {
+          let sel = editor.getSelection();
+          if (sel.indexOf(' ') >= 0) {
+            sel = this.firstXWords(sel, Config.maxWords);
+          }
+          return sel;
+        }
+      }
+    }
+    return '';
+
+    function selectWordAtCursor(editor) {
+      const wordPos = editor.wordAt(editor.getCursor());
+      if (wordPos) {
+        editor.setSelection(wordPos.from, wordPos.to);
+      }
+    }
+  }
+
+  /**
+   * Fetches the synonyms from Datamuse API
+   * @typedef {{Heading: string, Word: Array<string>}} SynonymResult
+   * @param {string} lookup
+   * @returns {Array<SynonymResult>}
+   */
+  async fetchSynonyms(lookup) {
+    if (lookup in this.synonymCache) return this.synonymCache[lookup];
+    let results = [];
     try {
-      const res = await requestUrl(url);
+      let res = await Promise.all([
+        fetchUrl(Config.synUrl + Config.synonymArg + lookup),
+        fetchUrl(Config.synUrl + Config.antonymArg + lookup),
+        fetchUrl(Config.synUrl + Config.similarArg + lookup),
+      ]);
+
+      results = [
+        { Heading: Lang.synonymsHdr, Words: res[0] },
+        { Heading: Lang.antonymsHdr, Words: res[1] },
+        { Heading: Lang.similarHdr, Words: res[2] },
+      ];
+    } catch (error) {
+      console.log(error);
+    }
+    this.synonymCache[lookup] = results;
+    return results;
+    
+    async function fetchUrl(url) {
+      let result = null;
+      let response = await requestUrl(url);
+      if (response.status === 200) {
+        result = await response.json;
+      }
+      return result;
+    }
+  }
+
+  /**
+   * Fetch the word definition from Wikionary API
+   * @param {string} word
+   * @returns {JSON|undefined}
+   */
+  async fetchDefinitions(word) {
+    if (word in this.definitionCache) return this.definitionCache[word];
+    try {
+      word = word.toLowerCase(); // online lookup requires lower case
+      let res = await requestUrl(Config.dictUrl + word);
       if (res.status === 200) {
-        const source = res.text;
-        const dom = new DOMParser().parseFromString(source, 'text/html');
-        const versions = dom.querySelectorAll('.singleverse-row');
-        versions.forEach((elem) => {
-          result.push(this.extractPlainText(elem.innerHTML));
-        });
-        this.cache[lookup] = result;
-        return result;
+        let raw = await res.json;
+        this.definitionCache[word] = raw.en;
+        return raw.en; // just the English results
       }
     } catch (error) {
       console.log(error);
     }
-    return null;
+    return undefined;
   }
 
   /**
-   * Extracts the plain text from the html markup
-   * Separates the version abbreviation from the text
-   * Builds a full version name (abbr. + full name)
-   * 
-   * @param {string} html html markup
-   * @returns {{version, text}} bible version name, full text of verse
+   * Returns the first X words from the sentence provided
+   * @param {string} sentence
+   * @param {number} count how many words
+   * @returns {string} Check for empty!
    */
-  extractPlainText(html) {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    let version = doc.body.childNodes[0].textContent ?? '';
-    version = Config.sep1 + version + Config.sep2 + BibleVersions[version] ?? '';
-    let text = doc.body.childNodes[1].textContent ?? '';
-    text = text.replace('¶', '');
-    return { version, text };
-  }
-
-  /**
-   * Try to validate a scripture reference entered by user into search box
-   *
-   * @param {string} input
-   * @param {api} api jwl-linker api
-   * @returns {string} empty if no match
-   */
-  scriptureFromSearch(input) {
-    const match = this.jwl.matchPotentialScriptures(input)[0] ?? null;
-    if (match) {
-      const result = this.jwl.validateScripture(match, api.DisplayType.first);
-      return result.display;
-    } else {
-      return '';
-    }
-  }
-
-  /**
-   * Try to find and validate a scripture reference from the cursor position
-   *
-   * @param {obsidian.View} active_view curernt editor view
-   * @param {api} jwl jwl-linker api
-   * @returns {string} empty if no match
-   */
-  scriptureFromCursor(active_view) {
-    let result; 
-    let lookup = '';
-    if (active_view) {
-      const offset = 25; // ± based on longest scripture reference I can think of
-      const editor = active_view.editor;
-      const cursor = editor.getCursor();
-      const line = editor.getLine(cursor.line);
-      let loc = cursor.ch;
-      const begin = loc - offset < 0 ? 0 : loc - offset;
-      const end = loc + offset > line.length ? line.length : loc + offset;
-      loc -= begin;
-      const fragment = line.slice(begin, end);
-      const matches = this.jwl.matchPotentialScriptures(fragment);
-      if (matches.length) {
-        for (const match of matches) {
-          // Is the cursor within or at the end of this scripture?
-          if (loc >= match.begin && loc <= match.end) {
-            result = this.jwl.validateScripture(match, this.jwl.DisplayType.first);
-            lookup = result.display;
-            break;
-          }
-        }
-      }
-    } else {
-      new Notice(Lang.noEditor, Config.delay);
-    }
-    return lookup;
+  firstXWords(sentence, count) {
+    const rgx = new RegExp('((\\s*\\S+){' + count + '})([\\s\\S]*)', 'gm');
+    let match = rgx.exec(sentence);
+    return match !== null ? match[1] : '';
   }
 }
 
-const BibleVersions = {
-  AKJV: 'Authorized (King James) Version',
-  AMP: 'Amplified Bible ',
-  AMPC: 'Amplified Bible, Classic Edition ',
-  ASV: 'American Standard Version ',
-  BRG: 'BRG Bible ',
-  CEB: 'Common English Bible ',
-  CEV: 'Contemporary English Version ',
-  CJB: 'Complete Jewish Bible ',
-  CSB: 'Christian Standard Bible ',
-  DARBY: 'Darby Translation ',
-  DLNT: 'Disciples’ Literal New Testament ',
-  DRA: 'Douay-Rheims 1899 American Edition ',
-  EASY: 'EasyEnglish Bible ',
-  EHV: 'Evangelical Heritage Version ',
-  ERV: 'Easy-to-Read Version ',
-  ESV: 'English Standard Version ',
-  ESVUK: 'English Standard Version Anglicised ',
-  EXB: 'Expanded Bible ',
-  GNT: 'Good News Translation ',
-  GNV: '1599 Geneva Bible ',
-  GW: 'GOD’S WORD Translation ',
-  HCSB: 'Holman Christian Standard Bible ',
-  ICB: 'International Children’s Bible ',
-  ISV: 'International Standard Version ',
-  JUB: 'Jubilee Bible 2000 ',
-  KJ21: 'Century King James Version ',
-  KJV: 'King James Version ',
-  LEB: 'Lexham English Bible ',
-  LSB: 'Legacy Standard Bible ',
-  MEV: 'Modern English Version ',
-  MOUNCE: 'Mounce Reverse Interlinear New Testament ',
-  MSG: 'The Message ',
-  NABRE: 'New American Bible (Revised Edition) ',
-  NASB: 'New American Standard Bible ',
-  NASB1995: 'New American Standard Bible 1995 ',
-  NCB: 'New Catholic Bible ',
-  NCV: 'New Century Version ',
-  NET: 'New English Translation ',
-  NIRV: "New International Reader's Version ",
-  NIV: 'New International Version ',
-  NIVUK: 'New International Version - UK ',
-  NKJV: 'New King James Version ',
-  NLT: 'New Living Translation ',
-  NLV: 'New Life Version ',
-  NMB: 'New Matthew Bible ',
-  NOG: 'Names of God Bible ',
-  NRSVA: 'New Revised Standard Version, Anglicised ',
-  NRSVACE: 'New Revised Standard Version, Anglicised Catholic Edition ',
-  NRSVCE: 'New Revised Standard Version Catholic Edition ',
-  NRSVUE: 'New Revised Standard Version Updated Edition ',
-  NTFE: 'New Testament for Everyone ',
-  OJB: 'Orthodox Jewish Bible ',
-  PHILLIPS: 'J.B. Phillips New Testament ',
-  RGT: 'Revised Geneva Translation ',
-  RSV: 'Revised Standard Version ',
-  RSVCE: 'Revised Standard Version Catholic Edition ',
-  TLB: 'Living Bible ',
-  TLV: 'Tree of Life Version ',
-  VOICE: 'The Voice ',
-  WE: 'Worldwide English (New Testament)',
-  WEB: 'World English Bible ',
-  WYC: 'Wycliffe Bible ',
-  YLT: "Young's Literal Translation ",
-};
-
 module.exports = {
-  default: BibleVersionPlugin,
+  default: SynonymSidebarPlugin,
 };

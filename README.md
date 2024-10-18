@@ -1,24 +1,26 @@
-# Bible Versions plugin for [Obsidian](https://obsidian.md)
+# Synonym plugin for [Obsidian](https://obsidian.md)
 
-Displays parallel bible versions in the right sidebar for a selected scripture reference, fetched from BibleGateway.com.
+Displays synonyms, antonyms, similar meanings, and definitions  in the right sidebar, fetched from Datamuse.com and Wiktionary.com
 
 
-# How to Install
+# How to install
 
-Download the latest **bible-versions** [release](https://github.com/MrBertie/bible-versions/releases), unzip it, and drop the folder into your `{Obsidian Vault}/.obsidian/plugins` folder.  Edit the plugin folder name to remove the version number, e.g. `-v.0.1.1`, and then restart Obsidian.
+Download the latest **Synonym** [release](https://github.com/MrBertie/synonym/releases), unzip it, and drop the folder into your `{Obsidian Vault}/.obsidian/plugins` folder.  Edit the plugin folder name to remove the version number, e.g. `-v.0.1.1`, and then restart Obsidian.
 You will need to go to the *Plugin Settings* page in Obsidian and enable the plugin.
 
-⚠️ IMPORTANT: the **jwl-linker** plugin is a required dependency and must be installed for this plugin to work. *(It is used to recognise and validate the scripture references.)*
+# How to use
 
+Place the cursor in a word and click the `Find word at cursor` button beside the search box.  The result will be listed in the sidebar.
 
-# How to Use
+**Manual search.**  You can also type a word or phrase directly into the search box and press `Enter`.
 
-Place the cursor in a bible scripture reference anywhere in a note and then click the `Find scripture at cursor` button beside the search box to look on [Bible Gateway](https://biblegateway.com).  If a match is found then all available bible versions for that verse will be listed in the sidebar.
+**Reset search.**  Click to the clear search box cross to reset the display.
 
-You can also type the scripture reference into the search box directly and press `Enter`.  
+The sidebar keeps a history of all recent words, click on any word to reload that meaning.
 
-> Most of the common scripture reference abbreviations and styles are recognised.  For example: `Rom 1:20; Psalm 89:18; 1 Cor 9:26; 1Jo 2:15-17`
+## Copying
 
-**Reset search.**  Click to the clear search box `x` to reset the display.
+**Synonyms.**  Click on any synonym, antonym or similar meaning to replace the current word at the cursor (caret).
 
-**Copying the result.**  Click on a verse text in the sidebar to copy it to the clipboard.
+**Definitions.**  Click on a definition to copy it to the clipboard.
+

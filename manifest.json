@@ -1,11 +1,11 @@
 {
-	"id"           : "bible-versions",
-	"name"         : "Bible Versions",
-	"version"      : "0.1.0",
-	"minAppVersion": "1.0.0",
-	"description"  : "Display parallel bible versions from BibleGateway.com for the selected scripture reference.",
-	"author"       : "MrBertie",
-	"authorUrl"    : "https://github.com/MrBertie/bible-versions",
-	"fundingUrl"   : "https://github.com/MrBertie/bible-versions",
+	"id": "synonyms",
+	"name": "Synonyms",
+	"version": "0.2.0",
+	"minAppVersion": "0.15.0",
+	"description": "Shows a list of synonyms and dictionary definitions in the right sidebar for the current word in the editor; click to insert.",
+	"author": "MrBertie",
+	"authorUrl": "https://github.com/MrBertie/synonyms",
+	"fundingUrl": "https://github.com/MrBertie/synonyms",
 	"isDesktopOnly": false
 }

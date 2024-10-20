@@ -1,147 +1,71 @@
-[data-type="synonym-view"] {
-  .search-row .search-input-container {
-    width: 100%;
+.lmp {
+  padding: 4px 8px 32px !important;
+}
+
+.lmp-total {
+  border: 1.5px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  letter-spacing: 0.65px !important;
+  margin-top: 8px;
+  padding-top: 2px;
+  .tree-item-inner-text {
+    font-size: 1.12em;
   }
-  .syn-active-word {
-    font-size: var(--font-ui-medium);
+}
+
+.lmp-header {
+  margin-top: 4px;
+}
+  
+.lmp-header .tree-item-inner-text {
+  color: var(--text-normal);
+  font-size: 1.1em;
+}
+    
+.lmp-title {
+  justify-content: space-between;
+  align-items: unset;
+  &.is-open {
+    color: var(--text-normal);
+  }
+  &.is-active {
     color: var(--text-accent);
-    border-color: var(--background-modifier-border-focus);
-  }
-  .syn-cursor-icon {
-    width: 50px;
-    &:hover {
-      color: var(--text-normal);
-      background-color: var(--background-modifier-active-hover);
-      border: 1px solid var(--background-modifier-border-hover);
-    }
   }
 }
 
-.syn {
-  padding: 4px 16px 32px !important;
+.lmp-title-content {
+  flex-grow: 1;
+}
 
-  :is(.syn-heading, .syn-info, .syn-none) {
-    margin: 16px 0 8px;
-  }
+.lmp .tree-item-children.is-collapsed {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.5s ease !important;
+}
 
-  .syn-history {
-    margin: 4px 0 20px;
-    span {
-      color: var(--text-muted);
-      font-size: var(--font-ui-smaller);
-      padding: 6px 8px 6px 8px;
-    }
-  }
+.tree-item-inner-text.lmp-color-0 { color: var(--color-red); }
+.tree-item-inner-text.lmp-color-1 { color: var(--color-orange); }
+.tree-item-inner-text.lmp-color-2 { color: var(--color-yellow); }
+.tree-item-inner-text.lmp-color-3 { color: var(--color-green); }
+.tree-item-inner-text.lmp-color-4 { color: var(--color-cyan); }
+.tree-item-inner-text.lmp-color-5 { color: var(--color-blue); }
+.tree-item-inner-text.lmp-color-6 { color: var(--color-purple); }
+.tree-item-inner-text.lmp-color-7 { color: var(--color-pink); }
 
-  .syn-help {
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-    color: var(--text-muted);
-    font-size: var(--font-smaller);
-    padding: 8px;
-    padding-left: 12px;
-    ul {
-      margin: 4px 0px;
-      padding-inline-start: 1.8em;
-      li {
-        color: var(--text-muted);
-        list-style-position: outside;
-        padding: 4px 0px;
-      }
-    }
-    .clear-history:hover {
-      color: var(--text-normal);
-    }
-  }
-  
-  .syn-show-help {
-    border-top: 1px solid var(--background-modifier-border);
-    color: var(--text-muted);
-    padding: 8px;
-    &:hover {
-      color: var(--text-normal);
-    }
-  }
 
-  :is(.syn-definition, .syn-example) {
-    margin: 4px 0 8px;
-    user-select: text !important;
-    -webkit-user-select: text !important;
-  }
-
-  .syn-results {
-    margin-bottom: 1.3em;
-    max-height: inherit;
-  }
-  
-  .syn-searching {
-    color: var(--text-muted);
-    margin-bottom: 2em;
-    white-space: pre-line;
-  }
-
-  .syn-heading {
-    color: var(--color-orange);
-    counter-reset: part 0;
-    font-family: var(--font-interface);
-    span {
-      padding: 0 8px;
-      --icon-size: var(--icon-l);
-      --icon-stroke: var(--icon-l-stroke-width);
-    }
-    &:first-of-type {
-      margin-top: 0px;
-    }
-  }
-  
-  :is(.syn-word, .syn-history span) {
-    display: inline-block;
-  }
-
-  .syn-word {
-    color: var(--text-muted);
-    display: inline-block;
-    padding: 4px 8px 6px;
-  }
-
-  .syn-more {
-    color: var(--text-muted);
-    height: 28px;
-    margin-left: 8px;
-  }
-  
-  :is(.syn-word, .syn-more, .syn-definition, .syn-definition:before, .syn-history span) {
-    &:hover {
-      color: var(--text-normal);
-      background: var(--background-modifier-active-hover);
-      border-radius: 4px;
-    }
-  }
-  .syn-definition {
-    color: var(--text-muted);
-    counter-increment: part 1;
-    margin-left: 1em;
-    padding: 2px;
-    text-indent: -1em;
-    &::before {
-      content: counter(part) ". ";
-    }
-  }
-
-  .syn-example {
-    color: var(--text-faint);
-    font-size: var(--font-smaller);
-    margin-left: 1.25em;
-  }
-
-  .syn-none {
-    color: var(--text-faint);
-    &:after {
-      content: "None";
-      font-size: 0.7em;
-      margin-left: 0.5em;
-      vertical-align: super;
-    }
+.lmp-settings {
+  textarea {
+    resize: none;
+    width: 20em;
+    height: 8em;
   }
 }
 
+body.is-phone {
+  .lmp-settings {
+    textarea {
+      width: 100%;
+    }
+  }
+}

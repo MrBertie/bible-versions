@@ -1,53 +1,42 @@
-/*
-Synonyms Plugin
-===============
-Show a list of synonyms for the current word in the editor in the right sidebar. Click to insert.
-*/
+'use strict';
 
-const { Plugin, ItemView, setTooltip, setIcon, requestUrl, Notice } = require('obsidian');
+const { Plugin, ItemView, DeferredView, setIcon, setTooltip, Setting, EventRef, debounce,
+  PluginSettingTab, FileView, Menu, TFile, WorkspaceLeaf } = require('obsidian');
 
-const SYNONYM_VIEW = 'synonym-view';
-
-const Config = {
-  maxResults: 20, // limit of how many words per heading to return
-  maxWords: 10, // limit to selection size, max no. of words
-  dictUrl: 'https://en.wiktionary.org/api/rest_v1/page/definition/',
-  synUrl: 'https://api.datamuse.com/words?',
-  synonymArg: 'rel_syn=',
-  antonymArg: 'rel_ant=',
-  similarArg: 'ml=',
+const DEFAULT_SETTINGS = {
+  countMonths: 1,
+  openType: 'tab',
+  hiddenFolders: '',
+  rainbowHeaders: true,
+  dateLocale: 'en-ZA',
 };
 
 const Lang = {
-  name: 'Synonyms',
-  introHdr: 'Synonyms',
-  synonymsHdr: 'Synonyms',
-  antonymsHdr: 'Antonyms',
-  similarHdr: 'Similar meanings',
-  definitionsHdr: 'Definitions',
-  definitionCopied: 'Word definition copied to clipboard',
-  clearTip: 'Clear search',
-  intro: 'Find synonyms, antonyms, similar meanings, and dictionary definitions.',
-  source1: 'Synonyms from <a href="https://api.datamuse.com/words?rel_syn=example">Datamuse</a>',
-  source2: 'Dictionary from <a href="https://en.wiktionary.org/api/rest_v1/page/definition/example">Wiktionary</a>',
-  more: ' more...',
-  searchingSyn: 'Searching for synonyms from Datamuse...',
-  searchingDef: 'Searching for definitions from Wiktionary...',
-  searchPlc: 'Find synonyms, antonyms, & definitions....',
-  findCursorTip: 'Find word at cursor',
-  findCursorTxt: 'Click the button beside the search box to find the word at the cursor position',
-  hideTip: 'Click to hide',
-  insertWordTxt: 'Click a synonym, antonym, or similar meaning to replace the word at the cursor',
-  copyDefinitionTxt: 'Click a dictionary definition to copy it to the clipboard',
-  clearTxt: 'Click here to clear the search history.',
-  expandHelp: 'Help…',
-};
-
-const DEFAULT_SETTINGS = {
-  maxHistory: 25,
+  name: 'Last Month',
+  // openTabs: 'Open tabs',
+  // openTab: 'Click to activate tab',
+  newTab: 'New tab',
+  openSettings: 'Open settings',
+  updateView: 'Update view',
+  noOfMonths: 'No of months',
+  lastMonth: 'LAST MONTH',
+  lastMonths: 'LAST {count} MONTHS',
+  hiddenFolders: 'Hidden folders:',
+  invalidRegex: '⚠️ Invalid regular expression',
+  collapseTip: 'Click to collapse',
+  expandTip: 'Click to expand',
+  collapseAllTip: 'Collapse',
+  expandAllTip: 'Expand all',
+  // closeTabLabel: 'Close this tab',
+  openTabLabel: 'Open in new tab',
+  openRightLabel: 'Open to right',
+  monthOptions: { 1:'1 month', 2:'2 months', 3:'3 months', 4:'4 months', 5:'5 months', 6:'6 months' },
+  openTypeOptions: { tab: 'Tab', split: 'Split', window: 'Window', },
 }
 
-class SynonymSidebarPlugin extends Plugin {
+const LAST_MONTH_VIEW = 'last-month';
+
+class LastMonthPlugin extends Plugin {
   constructor() {
     super(...arguments);
   }
@@ -56,24 +45,34 @@ class SynonymSidebarPlugin extends Plugin {
     await this.loadSettings();
 
     this.registerView(
-      SYNONYM_VIEW, 
-      (leaf) => (this.view = new SynonymSidebarView(leaf, this)),
+      LAST_MONTH_VIEW,
+      (leaf) => (this.view = new LastMonthView(leaf, this)),
     );
-
+    
     this.addCommand({
-      id: 'synonym-open',
+      id: 'last-month-open',
       name: 'Open sidebar',
       callback: this.activateView.bind(this),
     });
 
+    // Register in "Settings > Page Previews > Last Month" (i.e. Ctrl to show Preview)
+    this.app.workspace.registerHoverLinkSource(LAST_MONTH_VIEW, {
+      display: Lang.name,
+      defaultMod: true,
+    });
+
     //this.app.workspace.onLayoutReady(this.activateView.bind(this));
-    
+
+    this.addSettingTab(new LastMonthSettingTab(this.app, this));
+
     console.log('%c' + this.manifest.name + ' ' + this.manifest.version +
-      ' loaded', 'background-color: firebrick; padding:4px; border-radius:4px');
+      ' loaded', 'background-color: teal; padding:4px; border-radius:4px');
   }
-  
-  onunload() {}
-  
+
+  onunload() {
+    this.app.workspace.unregisterHoverLinkSource(LAST_MONTH_VIEW);
+  }
+
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
   }
@@ -84,11 +83,11 @@ class SynonymSidebarPlugin extends Plugin {
 
   async activateView() {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(SYNONYM_VIEW).first();
+    let leaf = workspace.getLeavesOfType(LAST_MONTH_VIEW).first();
     if (!leaf) {
       leaf = workspace.getRightLeaf(false); // false => no split
       await leaf.setViewState({
-          type: SYNONYM_VIEW,
+          type: LAST_MONTH_VIEW,
           active: true,
         });
     }
@@ -96,23 +95,23 @@ class SynonymSidebarPlugin extends Plugin {
   }
 }
 
-class SynonymSidebarView extends ItemView {
+class LastMonthView extends ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
     this.settings = plugin.settings;
-    this.synonymCache = {};
-    this.definitionCache = {};
-    this.searchboxEl;
-    this.historyEl;
-    this.history = [];
-    this.helpEl;
-    this.expandHelpEl;
-    this.helpExpanded = true;
+    this.menu = this.buildMonthMenu();
+    this.collapsed = false;
+    this.hiddenFiles = {};
+  }
+
+  async onOpen() {
+    this.addNavButtons();
+    this.updateView();
   }
 
   getViewType() {
-    return SYNONYM_VIEW;
+    return LAST_MONTH_VIEW;
   }
 
   getDisplayText() {
@@ -120,402 +119,516 @@ class SynonymSidebarView extends ItemView {
   }
 
   getIcon() {
-    return 'book-a';
+    return 'history';
   }
 
-  // Update state from workspace
-  async setState(state, result) {
-    if (state.lookup) {
-      this.searchboxEl.value = state.lookup;
-    }
-    this.history = state.history ?? [];
-    this.showHistory();
-    this.expandHelp(state.help ?? true);
-    await super.setState(state, result);
+  load() {
+    super.load();
+    this.registerEvent(this.app.vault.on('rename', this.updateView.bind(this)));
+    this.registerEvent(this.app.vault.on('delete', this.updateView.bind(this)));
+    this.registerEvent(this.app.workspace.on('file-open', this.updateView.bind(this)));
+    this.registerEvent(this.app.workspace.on('layout-change', this.updateView.bind(this)));
+    this.registerEvent(this.app.workspace.on('active-leaf-change', this.updateView.bind(this)));
   }
 
-  // Save state to workspace
-  getState() {
-    let state = super.getState();
-    state.lookup = this.searchboxEl.value;
-    state.history = this.history;
-    state.help = this.helpExpanded;
-    return state;
-  }
+  /* ⚒️ INTERNAL FUNCTIONS */
 
-  async onOpen() {
-    let lookup = '';
-    let resultCache = [];
-    
-    // SEARCH BAR
-    const rowEl = createDiv({ cls: 'search-row' });
-    const contEl = rowEl.createDiv({ cls: 'search-input-container' });
-    const searchboxEl = contEl.createEl('input', {
-      type: 'search',
-      placeholder: Lang.searchPlc,
-    });
-    this.searchboxEl = searchboxEl;
-    const clearEl = contEl.createDiv( {
-      cls: 'search-input-clear-button',
-    });
-    setTooltip(clearEl, Lang.clearTip);
-    const cursorBtn = rowEl.createDiv({ cls: 'clickable-icon syn-cursor-icon' });
-    setIcon(cursorBtn, 'text-cursor-input');
-    setTooltip(cursorBtn, Lang.findCursorTip, { placement: 'bottom' });
-    cursorBtn.onclick = () => {
-      searchboxEl.value = this.currentWord(this.app);
-      searchboxEl.onsearch();
-    };
-    this.containerEl.prepend(rowEl);  // place at top to ensure it stays fixed
-        
-    // PLUGIN CONTAINER
-    this.contentEl.empty();
-    this.contentEl.addClass('syn');
-
-    // START VIEW
-    const introEl = this.contentEl.createDiv();
-
-    const historyEl = introEl.createEl('div', { cls: 'syn-history'});
-    this.historyEl = historyEl;
-   
-    const expandHelpEl = introEl.createEl('div', { cls: 'syn-show-help' });
-    setIcon(expandHelpEl, 'help');
-    setTooltip(expandHelpEl, Lang.expandHelp, { placement: 'left' });
-    this.expandHelpEl = expandHelpEl;
-
-    const helpEl = introEl.createDiv({ text: Lang.intro, cls: 'syn-help'});
-    const listEl = helpEl.createEl('ul');
-    listEl.createEl('li', { text: Lang.findCursorTxt });
-    listEl.createEl('li', { text: Lang.insertWordTxt });
-    listEl.createEl('li', { text: Lang.copyDefinitionTxt });
-    const wipeEl = listEl.createEl('li', { text: Lang.clearTxt , cls: 'clear-history' });
-    listEl.createEl('li').innerHTML = Lang.source1;
-    listEl.createEl('li').innerHTML = Lang.source2;
-    setTooltip(helpEl, Lang.hideTip);
-    this.helpEl = helpEl;
-
-    this.expandHelp(this.helpExpanded);
-
-    // SYNONYM VIEW
-    const searchingEl = this.contentEl.createDiv({
-      text: Lang.searchingSyn,
-      cls: 'syn-searching',
-    });
-    searchingEl.hide();
-
-    const synonymEl = this.contentEl.createDiv({ cls: 'syn-results'});
-
-    // DEFINITION VIEW
-    const searchingDefEl = this.contentEl.createDiv({
-      text: Lang.searchingDef,
-      cls: 'syn-searching',
-    });
-    searchingDefEl.hide();
-
-    const definitionEl = this.contentEl.createDiv({ cls: 'syn-results'});
-
-    // *** EVENTS ****
-
-    searchboxEl.onsearch = () => {
-      lookup = searchboxEl.value;
-      searchboxEl.addClass('syn-active-word');
-      if (lookup !== '') {
-        introEl.hide();
-        searchingEl.show();
-        this.fetchSynonyms(lookup).then((results) => {
-          searchingEl.hide();
-          showSynonyms(results, synonymEl);
-          resultCache = results; // needed for the 'More..' button feature
-        });
-        searchingDefEl.show();
-        this.fetchDefinitions(lookup).then((word) => {
-          searchingDefEl.hide();
-          showDefinitions(word, definitionEl);
-          showFiller(definitionEl);
-        });
-        this.addToHistory(lookup);
-        this.showHistory();
-      }
-    };
-
-    clearEl.onclick = (event) => {
-      searchboxEl.removeClass('syn-active-word');
-      searchboxEl.value = '';
-      synonymEl.empty();
-      definitionEl.empty();
-      introEl.show();
-    };
-
-    historyEl.onclick = (event) => {
-      if (event.target.tagName === 'SPAN') {
-        searchboxEl.value = event.target.textContent;
-        searchboxEl.onsearch();
-      }
+  addNavButtons() {
+    const navEl = createDiv({ cls: 'nav-header' });
+    const buttonsEl = navEl.createDiv({ cls: 'nav-buttons-container' });
+  
+    const monthBtn = buttonsEl.createDiv({ cls: 'clickable-icon nav-action-button' });
+    setIcon(monthBtn, 'calendar');
+    setTooltip(monthBtn, Lang.noOfMonths, { placement: 'bottom' });
+    monthBtn.onclick = (event) => {
+      this.menu.showAtMouseEvent(event);
+      event.stopPropagation();
     }
 
-    wipeEl.onclick = () => {
-      this.clearHistory();
-      clearEl.onclick();
+    const updateBtn = buttonsEl.createDiv({ cls: 'clickable-icon nav-action-button' });
+    setIcon(updateBtn, 'refresh-cw');
+    setTooltip(updateBtn, Lang.updateView, { placement: 'bottom' });
+    updateBtn.onclick = () => {
+      this.updateView();
     }
 
-    /**
-     * Replace editor selection with clicked synonym
-     * Lookup the currently selected word in the editor
-     * @param {event} event
-     */
-    synonymEl.onclick = (event) => {
-      if (event.target.className === 'syn-word') {
-        const word = event.target.textContent;
-        this.currentWord(this.app, word);
-      }
-      if (event.target.className === 'syn-more') {
-        showSynonyms(resultCache, synonymEl, true);
-      }
+    const settingsBtn = buttonsEl.createDiv({cls: 'clickable-icon nav-action-button' });
+    setIcon(settingsBtn, 'settings');
+    setTooltip(settingsBtn, Lang.openSettings, { placement: 'bottom' });
+    settingsBtn.onclick = () => {
+      this.openSettings();
     }
 
-    definitionEl.onclick = (event) => {
-      if (event.target.className === 'syn-definition') {
-        navigator.clipboard.writeText('*' + searchboxEl.value + '* 🔅' + event.target.textContent);
-        new Notice(Lang.definitionCopied, 2000);
-      }
-    }
-
-    expandHelpEl.onclick = () => {
-      this.expandHelp(true);
-    }
-
-    helpEl.onclick = () => {
-      this.expandHelp(false);
-    }
-    
-    // RENDER functions
-    // ****************
-
-    /**
-     * Render the datamuse json results to HTML
-     * @param {Array<SynonymResult>} results list of synonyms, antonyms and similar words
-     * @param {HTMLElement} showEl where to show the results
-     * @param {boolean} all show all results?
-     */
-    function showSynonyms(results, showEl, all = false) {
-      showEl.empty();
-      for (const result of results) {
-        const heading = result.Heading.toUpperCase();
-        const len = result.Words.length;
-        if (len > 0) {
-          showEl.createDiv({ text: heading, cls: 'syn-heading' });
-          const end = all ? len : Config.maxResults;
-          result.Words.slice(0, end).map((word) => {
-            showEl.createSpan( { text: word.word, cls: 'syn-word' });
-          });
-        } else {
-          showEl.createDiv({ text: heading, cls: 'syn-none syn-heading' });
-        }
-        if (!all && len > Config.maxResults) {
-          const more = len - Config.maxResults;
-          showEl.createEl('button', { text: more + Lang.more, cls: 'syn-more' });
-        }
-      }
-    }
-
-    /**
-     * Render the word definitions from Wiktionary to HTML
-     * @param {JSON} definition
-     * @param {HTMLElement} showEl where to show the results
-     */
-    function showDefinitions(definition, showEl) {
-      showEl.empty();
-      if (definition) {
-        showEl.createDiv({ text: Lang.definitionsHdr.toUpperCase(), cls: 'syn-heading' });
-        definition.forEach((part) => {
-          const partEl = showEl.createDiv({ text: part.partOfSpeech, cls: 'syn-heading' });
-          part.definitions.forEach((def) => {
-            partEl.createDiv({
-              text: stripMarkup(def.definition),
-              cls: 'syn-definition',
-            });
-            if (def.examples !== undefined) {
-              def.examples.forEach((example) => {
-                partEl.createDiv({
-                  text: '“' + stripMarkup(example) + '”',
-                  cls: 'syn-example',
-                });
-              });
-            }
-          });
-        });
-      } else {
-        showEl.createDiv({ text: Lang.definitionsHdr.toUpperCase(), cls: 'syn-none' });
-      }
-    }
-
-        /**
-     * Remove html markup from text
-     * @param {string} html html markup
-     * @returns {string} plain text
-     */
-    function stripMarkup(html) {
-      let doc = new DOMParser().parseFromString(html, 'text/html');
-      let text = doc.body.textContent ?? '';
-      return text;
-    }
-
-    function showFiller(view) {
-      view.createDiv({ text: '🔅', cls: 'syn-searching' });
-    }
-  }
-
-  async onClose() {
-    this.unload();
-  }
-
-  /* INTERNAL FUNCTIONS */
-
-  expandHelp(isExpanded) {
-    if (isExpanded) {
-      this.expandHelpEl.hide();
-      this.helpEl.show();
-    } else {
-      this.helpEl.hide();
-      this.expandHelpEl.show();
-    }
-    this.helpExpanded = isExpanded;
-  }
-
-  showHistory() {
-    this.historyEl.empty();
-    this.history.forEach((item) => {
-      this.historyEl.createEl('span', { text: item });
-    });
-  }
-
-  clearHistory() {
-    this.history = [];
-    this.getState();
-    this.showHistory();
-  }
-
-  addToHistory(lookup) {
-    this.history = this.history.filter(item => item !== lookup); // no duplicates
-    this.history = [lookup, ...this.history]; // add to the top
-    if (this.history.length > this.settings.maxHistory) {
-      this.history = this.history.slice(0, this.settings.maxHistory);
-    }
-  }
-
-  /**
-   * Get / Set the editor selection
-   * In the most recent editor, grabs either:
-   * 1. The selected text (up to max number of words); 
-   *    NOTE: paragraphs of words make no sense in this context
-   * 2. The word at the cursor position
-   *
-   * @param {obsidian.App} app
-   * @param {string} replacement
-   * @returns {string}
-   */
-  currentWord(app, replacement = '') {
-    const view = app.workspace.getMostRecentLeaf().view;
-    if (view) {
-      const editor = view.editor;
-      // If there is no selection try to use the word at the cursor position
-      if (!editor.somethingSelected()) {
-        selectWordAtCursor(editor);
-      }
-      if (editor.somethingSelected) {
-        if (replacement !== '') {
-          editor.replaceSelection(replacement);
-          selectWordAtCursor(editor);
-        } else {
-          let sel = editor.getSelection();
-          if (sel.indexOf(' ') >= 0) {
-            sel = this.firstXWords(sel, Config.maxWords);
+    const collapseBtn = buttonsEl.createDiv({cls: 'clickable-icon nav-action-button' });
+    setIcon(collapseBtn, 'chevrons-down-up');  // default
+    setTooltip(collapseBtn, Lang.collapseAllTip, { placement: 'bottom' }); //default
+    collapseBtn.onclick = () => {
+      this.collapsed = !this.collapsed;
+      this.contentEl
+        .querySelectorAll('.tree-item-children')
+        .forEach((el) => {
+          if (this.collapsed) {
+            el.addClass('is-collapsed');
+            setIcon(collapseBtn, 'chevrons-up-down');
+            setTooltip(collapseBtn, Lang.expandAllTip, { placement: 'bottom' });
+          } else {
+            el.removeClass('is-collapsed');
+            setIcon(collapseBtn, 'chevrons-down-up');
+            setTooltip(collapseBtn, Lang.expandAllTip, { placement: 'bottom' });
           }
-          return sel;
-        }
-      }
+        });
     }
-    return '';
+    this.containerEl.parentElement.prepend(navEl); // Add at the top of the main view div
+  }
 
-    function selectWordAtCursor(editor) {
-      const wordPos = editor.wordAt(editor.getCursor());
-      if (wordPos) {
-        editor.setSelection(wordPos.from, wordPos.to);
+  /**
+   * 
+   * @param {EventRef} eventRef 
+   * @returns {void}
+   */
+  updateView(event) {
+    if (this === undefined) return; // duplicated events?
+    if (event instanceof WorkspaceLeaf && 
+      event.getViewState().type === LAST_MONTH_VIEW) return;
+
+    const { groups: groupHeaders, meta } = this.getRecentFiles();
+    
+    const contentEl = this.contentEl;
+    contentEl.empty();
+    contentEl.addClass('lmp');
+
+    // 🔆Header for the Total Count
+    const totalEl = createDiv({ cls: 'tree-item lmp-total' });
+    const titleEl = totalEl.createDiv({ cls: 'tree-item-self'});
+    setTooltip(titleEl, meta.last + ' — ' + meta.first);
+    const iconEl = titleEl.createDiv({ cls: 'tree-item-icon' });
+    setIcon(iconEl, 'calendar-range');
+    const innerEl = titleEl.createDiv({ cls: 'tree-item-inner' });
+    let title;
+    if (this.settings.months > 1) {
+      title = Lang.lastMonths.replace('{count}', this.settings.countMonths);
+    } else {
+      title = Lang.lastMonth; 
+    }
+    const textEl = innerEl.createSpan({ cls: 'tree-item-inner-text', text: title });
+    const flairEl = titleEl.createDiv({ cls: 'tree-item-flair-outer' });
+    flairEl.createSpan({ cls: 'tree-item-flair', text: meta.total });
+    setTooltip(flairEl, 
+      Lang.hiddenFolders + '\u{000A}—\u{000A}' + this.settings.hiddenFolders.replace('\n', '\u{000A}'));
+
+    contentEl.appendChild(totalEl);
+
+    let color = 0;
+    groupHeaders.forEach((hits, header) => {
+
+      // 🔆Headers for the Week Groups
+      const itemEl = contentEl.createDiv({ cls: 'tree-item' });
+      const headerEl = itemEl.createDiv({ cls: 'tree-item-self is-clickable ' });
+      setTooltip(headerEl, Lang.collapseTip, { placement: 'right' });
+      const iconEl = headerEl.createDiv({ cls: 'tree-item-icon' });
+      const innerEl = headerEl.createDiv({ cls: 'tree-item-inner' });
+      const textEl = innerEl.createSpan({
+        cls: 'tree-item-inner-text',
+        text: header.toUpperCase(),
+      });
+      const flairEl = headerEl.createDiv({ cls: 'tree-item-flair-outer' });
+      let count = hits.length;
+      flairEl.createSpan({ cls: 'tree-item-flair', text: count });
+      itemEl.addClass('lmp-header');
+      setIcon(iconEl, 'calendar');
+      if (this.settings.rainbow) {
+        textEl.addClass('lmp-color-' + (color % 8));
+        color++;
+      }
+      
+      // Enable Expand/Collapse of header
+      headerEl.onclick = (event) => {
+        event.preventDefault();
+        const collapsed = childrenEl.classList.toggle('is-collapsed');
+        const tip = (collapsed ? Lang.expandTip : Lang.expandTip);
+        setTooltip(headerEl, tip);
+      }
+      
+      // 🔆Children: Matching files for each Week header
+      const childrenEl = itemEl.createDiv({ cls: 'tree-item-children' });
+      hits.forEach(hit => {
+
+        const fileEl = childrenEl.createDiv({ cls: 'tree-item nav-file lmp-file' });
+        const tip = hit.path + 
+            '\u{000A}⇄ ' + new Date(hit.file?.stat.mtime).toLocaleString(DEFAULT_SETTINGS.dateLocale) + 
+            '\u{000A}\u{263C} ' + new Date(hit.file?.stat.ctime).toLocaleString(DEFAULT_SETTINGS.dateLocale);
+        setTooltip(fileEl, tip, { placement: 'right' });
+        const titleEl = fileEl.createDiv({
+          cls: 'tree-item-self is-clickable nav-file-title lmp-title',
+        });
+        const iconEl = titleEl.createDiv({ cls: 'tree-item-icon' });
+        const textEl = titleEl.createDiv({
+          cls: 'tree-item-inner nav-file-title-content lmp-title-content',
+          text: hit.name,
+        });
+        const icon = (hit.new ? 'file-plus-2' : 'file');
+        setIcon(iconEl, icon);
+
+        if (hit.active) {
+          titleEl.addClass('is-active');
+        }
+        if (hit.leaf) {
+          titleEl.addClass('is-open');
+        }
+
+        // Drag file to editor to create a link
+        titleEl.setAttr('draggable', 'true');
+        titleEl.addEventListener('dragstart', (event) => {
+          const file = this.app.metadataCache.getFirstLinkpathDest(hit.path, '');
+          const dragManager = this.app.dragManager;
+          const dragData = dragManager.dragFile(event, file);
+          dragManager.onDragStart(event, dragData);
+        });
+
+        // Trigger the file preview popover
+        titleEl.addEventListener('mouseover', (event) => {
+          this.app.workspace.trigger('hover-link', {
+            event,
+            source: LAST_MONTH_VIEW,
+            hoverParent: contentEl,
+            targetEl: fileEl,
+            linktext: hit.path,
+          });
+        });
+
+        // Add the extra open location options to the the file context menu
+        titleEl.addEventListener('contextmenu', (event) => {
+          const file = this.app.vault.getAbstractFileByPath(hit.path);
+          const menu = new Menu();
+          menu.addItem(item => {
+            item.setTitle(Lang.openTabLabel);
+            item.setIcon('file-plus');
+            item.setSection('open');
+            item.onClick(() => this.openFile(hit, false, options.tab));
+          });
+          menu.addItem(item => {
+            item.setTitle(Lang.openRightLabel);
+            item.setIcon('separator-vertical');
+            item.setSection('open');
+            item.onClick(() => this.openFile(hit, false, options.split));
+          });
+          this.app.workspace.trigger('file-menu', menu, file, '');
+          menu.showAtPosition({ x: event.clientX, y: event.clientY });
+        });
+
+        // Open a new tab/split/window on click
+        // TODO: open in a new tab if not already open? Difficult!
+        titleEl.addEventListener('click', (event) => {
+          this.openFile(hit, event.ctrlKey || event.metaKey);
+        });
+      });
+      contentEl.appendChild(childrenEl);
+    });
+    // TODO append list of open files for troubleshooting purposes (in small muted font)
+  }
+
+  buildMonthMenu() {
+    const menu = new Menu();
+    for (const [key, value] of Object.entries(Lang.monthOptions) ) {
+      menu.addItem(item => {
+        item.setTitle(value)
+        item.setIcon('calendar')
+        item.setChecked(key == this.settings.countMonths)
+        item.onClick(() => {
+          this.settings.countMonths = Number(value.substring(0, 1));
+          this.menu = this.buildMonthMenu();
+          this.plugin.saveSettings();
+          this.updateView();
+        });
+      });
+    }
+    return menu;
+  }
+
+  openSettings() {
+    this.app.setting.open();
+    this.app.setting.openTabById(this.plugin.manifest.id);
+  }
+
+  /**
+   * Open the provided file in the most recent leaf.
+   * @param {THit} hit
+   * @param {boolean} split 
+   * Should file be opened in a new split, or in the most recent split. 
+   * True if most recent split is pinned.
+   * @param {string} openType how should the tab be opened
+   * @returns {void}
+   */
+  openFile(hit, split = false, openType = null) {
+    // sanity check to be sure the file still exists
+    const targetFile = this.app.vault.getFileByPath(hit.file.path);
+    if (targetFile) {
+      // Is the file already open in a tab/window somewhere?
+      if (hit.leaf) {
+        this.app.workspace.setActiveLeaf(hit.leaf);
+      } else {
+        let leaf = this.app.workspace.getMostRecentLeaf();
+        const canCreateLeaf = split || leaf.getViewState().pinned;
+        if (canCreateLeaf) {
+          if (openType === options.split || this.plugin.settings.openType === 'split') {
+            leaf = this.app.workspace.getLeaf('split');
+          } else if (openType === options.window || this.plugin.settings.openType === 'window') {
+            leaf = this.app.workspace.getLeaf('window');
+          } else if (openType === options.tab || this.plugin.settings.openType === 'tab') {
+            leaf = this.app.workspace.getLeaf('tab');
+          }
+        }
+        leaf.openFile(targetFile);
       }
     }
   }
 
   /**
-   * Fetches the synonyms from Datamuse API
-   * @typedef {{Heading: string, Word: Array<string>}} SynonymResult
-   * @param {string} lookup
-   * @returns {Array<SynonymResult>}
+   * @typedef {Object} THit
+   * @property {TFile} file
+   * @property {string} name
+   * @property {string} path
+   * @property {Date} date
+   * @property {Date} week
+   * @property {boolean} new
+   * @property {WorkspaceLeaf} leaf
+   * @property {string} type
+   * @property {boolean} active
    */
-  async fetchSynonyms(lookup) {
-    if (lookup in this.synonymCache) return this.synonymCache[lookup];
-    let results = [];
-    try {
-      let res = await Promise.all([
-        fetchUrl(Config.synUrl + Config.synonymArg + lookup),
-        fetchUrl(Config.synUrl + Config.antonymArg + lookup),
-        fetchUrl(Config.synUrl + Config.similarArg + lookup),
-      ]);
 
-      results = [
-        { Heading: Lang.synonymsHdr, Words: res[0] },
-        { Heading: Lang.antonymsHdr, Words: res[1] },
-        { Heading: Lang.similarHdr, Words: res[2] },
-      ];
-    } catch (error) {
-      console.log(error);
-    }
-    this.synonymCache[lookup] = results;
-    return results;
-    
-    async function fetchUrl(url) {
-      let result = null;
-      let response = await requestUrl(url);
-      if (response.status === 200) {
-        result = await response.json;
+  ///** @typedef {Map<string, Array<THit>>} THits */
+
+  /**
+   * @typedef {Map} THits
+   * @property {string} header
+   * @property {Array<THit>}
+   */
+
+  /**
+   * Get created and modified files from recent months (setting)
+   * If a file was created and then modified in the same week then the created one is shown
+   * @returns {{THits, Object}} THits, meta: {first, last, total}
+   */
+  getRecentFiles() {
+    const today = new Date();
+    let cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - this.settings.countMonths);
+    const patterns = (this.settings.hiddenFolders ? this.settings.hiddenFolders.split('\n') : []);
+    const files = this.app.vault.getMarkdownFiles();
+    const active_file = this.app.workspace.getActiveFile();
+    const active_path = (active_file ? active_file.path : '');
+    const hide_file = hideFile.bind(this);
+    const meta = { 
+      first: today.toLocaleString('en-US', { month: 'short', day: 'numeric' }), // e.g. "May 10"
+      last: cutoff.toLocaleString('en-US', { month: 'short', day: 'numeric' }), 
+      total: 0 
+    };
+    this.hiddenFiles = {};
+    const openTabs = this.getOpenTabs();
+
+    const hits = files
+      .filter((file) => {
+        const include = !hide_file(file.path) && 
+          (file.stat.ctime > cutoff || file.stat.mtime > cutoff);
+        return include;
+        })
+      .map((file) => {
+        const cweek = getMonday(file.stat.ctime);
+        const mweek = getMonday(file.stat.mtime);
+        const isNew = (cweek === mweek); // created during this week
+        const leaf = openTabs[file.path]?.leaf ?? null;
+        const active = openTabs[file.path]?.active ?? false;
+        /** @type {THit} */
+        const hit = {
+          file: file,
+          name: file.basename,
+          path: file.path,
+          date: file.stat.mtime,
+          week: mweek,
+          new: isNew,
+          leaf: leaf,
+          type: 'file',
+          active: active,
+        }
+        return hit;
+      })
+      .sort((a, b) => b.date - a.date);
+
+    /** @type {THits} */
+    const groups = new Map();
+    meta.total = hits.length;
+    hits.forEach((hit) => {
+      const hdr = getHeader(hit.week);
+      if (!groups.has(hdr)) {
+        groups.set(hdr, []);
       }
+      groups.get(hdr).push(hit);
+    });
+    return { groups, meta };
+    
+    /* ⚒️ INTERNAL FUNCTIONS */
+
+    // memoize the header to save a few ms
+    function getHeader(week, cache = {}) {
+      if (week in cache) return cache(week);
+      const sow = new Date(week);
+      const eow = addDays(sow, 6);
+      const bom = sow.toLocaleString('en-US', { month: 'short' });
+      const eom = eow.toLocaleString('en-US', { month: 'short' });
+      const xmth = (bom === eom) ? '' : '\u{2008}' + eom; // 2008 = punc. space
+      cache[week] = bom + ' ' + sow.getDate() + '\u{2009}\u{2013}' + xmth + ' ' + eow.getDate();  // 2009 = hairspace
+      return cache[week];
+    }
+
+    function addDays(date, days) {
+      let result = new Date(date);
+      result.setDate(result.getDate() + days);
       return result;
     }
-  }
-
-  /**
-   * Fetch the word definition from Wikionary API
-   * @param {string} word
-   * @returns {JSON|undefined}
-   */
-  async fetchDefinitions(word) {
-    if (word in this.definitionCache) return this.definitionCache[word];
-    try {
-      word = word.toLowerCase(); // online lookup requires lower case
-      let res = await requestUrl(Config.dictUrl + word);
-      if (res.status === 200) {
-        let raw = await res.json;
-        this.definitionCache[word] = raw.en;
-        return raw.en; // just the English results
-      }
-    } catch (error) {
-      console.log(error);
+    // the first day of the week (Monday by default)
+    function getMonday(date) {
+      date = new Date(date);
+      const day = date.getDay();
+      const diff = date.getDate() - day + (day == 0 ? -6 : 1); // adjust when day is sunday
+      return new Date(date.setDate(diff)).toDateString();
     }
-    return undefined;
+
+    function hideFile(path) {
+      let hidden = false
+      if (patterns) {
+        hidden = patterns.some((pattern) => {
+          let match;
+          let valid;
+          if (!pattern) {
+            match = false;
+          } else {
+            try {
+              match = new RegExp(pattern).test(path);
+              valid = true;
+            } catch(error) {
+              match = true;
+              valid = false;
+            }
+          }
+          if (match) {
+            if (!this.hiddenFiles[pattern]) this.hiddenFiles[pattern] = '';
+            if (valid) {
+              this.hiddenFiles[pattern] += '  — ' + path + '\n';
+            } else {
+              this.hiddenFiles[pattern] = '  — ' + Lang.invalidRegex + '\n';
+            }
+          }
+          return match;
+        });
+      }
+      return hidden;
+    }
   }
 
-  /**
-   * Returns the first X words from the sentence provided
-   * @param {string} sentence
-   * @param {number} count how many words
-   * @returns {string} Check for empty!
-   */
-  firstXWords(sentence, count) {
-    const rgx = new RegExp('((\\s*\\S+){' + count + '})([\\s\\S]*)', 'gm');
-    let match = rgx.exec(sentence);
-    return match !== null ? match[1] : '';
+  getOpenTabs() {
+    const openTabs = {};
+    const activeId = this.app.workspace.getMostRecentLeaf().id;
+    for (let leaf of this.app.workspace.getLeavesOfType('markdown')) {
+      openTabs[leaf.view.getState().file] = {
+        leaf: leaf,
+        active: leaf.id === activeId,
+      }
+    }
+    return openTabs;
   }
 }
 
+class LastMonthSettingTab extends PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+    this.hiddenPreview = undefined;
+  }
+  display() {
+    const hiddenFiles = () => {
+      let folders = '';
+      Object.entries(this.plugin.view.hiddenFiles).forEach(([key, value]) => {
+        folders += '▶ ' + key + ' ◀\n' + value + '\n';
+      });
+      return folders;
+    }
+
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.addClass('lmp-settings');
+
+    new Setting(containerEl)
+      .setName('Number of months')
+      .setDesc(
+        'Number of recent months to show'
+      )
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOptions(Lang.monthOptions)
+          .setValue(this.plugin.settings.countMonths)
+          .onChange(async (value) => {
+            this.plugin.settings.countMonths = value;
+            await this.plugin.saveSettings();
+            this.plugin.view.updateView();
+          })
+      });
+
+    new Setting(containerEl)
+      .setName('Default open location')
+      .setDesc(
+        'When a note is clicked should it open in a new tab, split, or window (desktop only)'
+      )
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOptions(Lang.openTypeOptions)
+          .setValue(this.plugin.settings.openType)
+          .onChange(async (value) => {
+            this.plugin.settings.openType = value;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName('Rainbow headers')
+      .setDesc('Alternate header colors between the default theme base colours')
+      .addToggle((tog) => {
+        tog
+          .setValue(this.plugin.settings.rainbowHeaders)
+          .onChange(async (value) => {
+            this.plugin.settings.rainbowHeaders = value;
+            await this.plugin.saveSettings();
+            this.plugin.view.updateView();
+          });
+      })
+
+    new Setting(containerEl)
+      .setName('Hide folders or files')
+      .setDesc('Use regular expression patterns to hide certain folders and files. You can add one per line. Check your results in the list below.')
+      .addTextArea((text) => {
+        text
+          .setPlaceholder('^daily/\n\\.png$\nfoobar.*baz')
+          .setValue(this.plugin.settings.hiddenFolders)
+          .onChange(debounce(async (value) => {
+            this.plugin.settings.hiddenFolders = value;
+            this.plugin.saveSettings();
+            this.plugin.view.updateView();
+            this.hiddenPreview.setValue(hiddenFiles());
+          }, 1000, true));
+      });
+
+      
+    new Setting(containerEl)
+      .setName('Preview of hidden files or folders')
+      .setDesc('For checking purposes.\u{000A}A list of all the hidden folders matched by the above regular expressions.\u{000A}Also shows invalid expressions so that you can correct them.')
+      .addTextArea((text) => {
+        text.setValue(hiddenFiles());
+        this.hiddenPreview = text;  // hold a class ref for updates
+        text.inputEl.setCssProps({ height: "20em"});
+      });
+  }
+}
+
+
 module.exports = {
-  default: SynonymSidebarPlugin,
-};
+  default: LastMonthPlugin,
+}

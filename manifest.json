@@ -1,11 +1,10 @@
 {
-	"id": "synonyms",
-	"name": "Synonyms",
-	"version": "0.2.0",
-	"minAppVersion": "0.15.0",
-	"description": "Shows a list of synonyms and dictionary definitions in the right sidebar for the current word in the editor; click to insert.",
-	"author": "MrBertie",
-	"authorUrl": "https://github.com/MrBertie/synonyms",
-	"fundingUrl": "https://github.com/MrBertie/synonyms",
+	"id"           : "last-month",
+	"name"         : "Last Month",
+	"version"      : "0.2.1",
+	"minAppVersion": "0.16.3",
+	"description"  : "New sidebar to list pages that were created and/or modified in last few months.",
+	"author"       : "MrBertie",
+	"authorUrl"    : "https://github.com/MrBertie",
 	"isDesktopOnly": false
 }

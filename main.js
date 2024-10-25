@@ -1,42 +1,49 @@
-'use strict';
+/*
+Parallel Bible Versions Plugin
+===============
+Display parallel bible versions for the selected scripture reference.
+*/
 
-const { Plugin, ItemView, DeferredView, setIcon, setTooltip, Setting, EventRef, debounce,
-  PluginSettingTab, FileView, Menu, TFile, WorkspaceLeaf } = require('obsidian');
+/** External api from jwl-linker
+ *  @typedef {import('jwl.d.ts').api} api 
+ */
 
-const DEFAULT_SETTINGS = {
-  countMonths: 1,
-  openType: 'tab',
-  hiddenFolders: '',
-  rainbowHeaders: true,
-  dateLocale: 'en-ZA',
+const { Plugin, ItemView, setTooltip, setIcon, requestUrl, Notice } = require('obsidian');
+
+const BIBLE_VERSION_VIEW = 'bible-version-view';
+
+const Config = {
+  url: 'https://www.biblegateway.com/verse/en/',
+  sep1: ' | ',
+  sep2: ' • ',
+  delay: 3000,
 };
 
 const Lang = {
-  name: 'Last Month',
-  // openTabs: 'Open tabs',
-  // openTab: 'Click to activate tab',
-  newTab: 'New tab',
-  openSettings: 'Open settings',
-  updateView: 'Update view',
-  noOfMonths: 'No of months',
-  lastMonth: 'LAST MONTH',
-  lastMonths: 'LAST {count} MONTHS',
-  hiddenFolders: 'Hidden folders:',
-  invalidRegex: '⚠️ Invalid regular expression',
-  collapseTip: 'Click to collapse',
-  expandTip: 'Click to expand',
-  collapseAllTip: 'Collapse',
-  expandAllTip: 'Expand all',
-  // closeTabLabel: 'Close this tab',
-  openTabLabel: 'Open in new tab',
-  openRightLabel: 'Open to right',
-  monthOptions: { 1:'1 month', 2:'2 months', 3:'3 months', 4:'4 months', 5:'5 months', 6:'6 months' },
-  openTypeOptions: { tab: 'Tab', split: 'Split', window: 'Window', },
+  name: 'Bible Versions',
+  introHdr: 'Bible Versions',
+  intro: 'Show parallel Bible versions for a given verse reference.',
+  source: 'Sourced from <a href="https://www.biblegateway.com/">BibleGateway</a>',
+  invalidScripture: 'The scripture reference is not a valid Bible verse',
+  noResult: 'Could not find a matching scripture',
+  noEditor: 'No active editor',
+  searching: 'Searching for parallel versions from Bible Gateway...',
+  searchPlc: 'Find parallel bible verses...',
+  clearTip: 'Clear search',
+  findCursorTip: 'Find scripture at cursor',
+  findCursorTxt: 'Click the button beside the search box to find the word at the cursor position',
+  copyVerseTxt: 'Click verse text in any version to copy it to the clipboard',
+  clearTxt: 'Click here to clear the search history.',
+  copiedVerseMsg: 'The verse text was copied to the clipboard',
+  hideTip: 'Click to hide',
+  help: 'Help'
+};
+
+const DEFAULT_SETTINGS = {
+  maxHistory: 25, // hard coded for now
 }
 
-const LAST_MONTH_VIEW = 'last-month';
-
-class LastMonthPlugin extends Plugin {
+class BibleVersionPlugin extends Plugin {
   constructor() {
     super(...arguments);
   }
@@ -45,33 +52,21 @@ class LastMonthPlugin extends Plugin {
     await this.loadSettings();
 
     this.registerView(
-      LAST_MONTH_VIEW,
-      (leaf) => (this.view = new LastMonthView(leaf, this)),
+      BIBLE_VERSION_VIEW, 
+      (leaf) => new BibleVersionView(leaf, this.settings),
     );
-    
+
     this.addCommand({
-      id: 'last-month-open',
+      id: 'bible-version-open',
       name: 'Open sidebar',
       callback: this.activateView.bind(this),
     });
-
-    // Register in "Settings > Page Previews > Last Month" (i.e. Ctrl to show Preview)
-    this.app.workspace.registerHoverLinkSource(LAST_MONTH_VIEW, {
-      display: Lang.name,
-      defaultMod: true,
-    });
-
-    //this.app.workspace.onLayoutReady(this.activateView.bind(this));
-
-    this.addSettingTab(new LastMonthSettingTab(this.app, this));
-
-    console.log('%c' + this.manifest.name + ' ' + this.manifest.version +
-      ' loaded', 'background-color: teal; padding:4px; border-radius:4px');
+    // biome-ignore lint: Loading indicator, runs once only; // ⚠️
+    console.log(`%c${this.manifest.name} ${this.manifest.version} loaded`, 
+      'background-color: royalblue; padding:4px; border-radius:4px');
   }
 
-  onunload() {
-    this.app.workspace.unregisterHoverLinkSource(LAST_MONTH_VIEW);
-  }
+  onunload() {}
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -83,11 +78,11 @@ class LastMonthPlugin extends Plugin {
 
   async activateView() {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(LAST_MONTH_VIEW).first();
+    let leaf = workspace.getLeavesOfType(BIBLE_VERSION_VIEW).first();
     if (!leaf) {
       leaf = workspace.getRightLeaf(false); // false => no split
       await leaf.setViewState({
-          type: LAST_MONTH_VIEW,
+          type: BIBLE_VERSION_VIEW,
           active: true,
         });
     }
@@ -95,23 +90,24 @@ class LastMonthPlugin extends Plugin {
   }
 }
 
-class LastMonthView extends ItemView {
-  constructor(leaf, plugin) {
+class BibleVersionView extends ItemView {
+  constructor(leaf, settings) {
     super(leaf);
-    this.plugin = plugin;
-    this.settings = plugin.settings;
-    this.menu = this.buildMonthMenu();
-    this.collapsed = false;
-    this.hiddenFiles = {};
-  }
+    this.settings = settings;
+    this.cache = {};
+    this.searchboxEl;
+    this.historyEl;
+    this.history = [];
+    this.helpEl;
+    this.expandHelpEl;
+    this.helpExpanded = true;
 
-  async onOpen() {
-    this.addNavButtons();
-    this.updateView();
+    /** @type {api} */
+    this.jwl = this.app.plugins.plugins['jwl-linker']?.api;
   }
 
   getViewType() {
-    return LAST_MONTH_VIEW;
+    return BIBLE_VERSION_VIEW;
   }
 
   getDisplayText() {
@@ -119,516 +115,347 @@ class LastMonthView extends ItemView {
   }
 
   getIcon() {
-    return 'history';
+    return 'library';
   }
 
-  load() {
-    super.load();
-    this.registerEvent(this.app.vault.on('rename', this.updateView.bind(this)));
-    this.registerEvent(this.app.vault.on('delete', this.updateView.bind(this)));
-    this.registerEvent(this.app.workspace.on('file-open', this.updateView.bind(this)));
-    this.registerEvent(this.app.workspace.on('layout-change', this.updateView.bind(this)));
-    this.registerEvent(this.app.workspace.on('active-leaf-change', this.updateView.bind(this)));
+  // Update state from workspace
+  async setState(state, result) {
+    if (state.lookup) {
+      this.searchboxEl.value = state.lookup;
+    }
+    this.history = state.history ?? [];
+    this.showHistory();
+    await super.setState(state, result);
   }
 
-  /* ⚒️ INTERNAL FUNCTIONS */
-
-  addNavButtons() {
-    const navEl = createDiv({ cls: 'nav-header' });
-    const buttonsEl = navEl.createDiv({ cls: 'nav-buttons-container' });
-  
-    const monthBtn = buttonsEl.createDiv({ cls: 'clickable-icon nav-action-button' });
-    setIcon(monthBtn, 'calendar');
-    setTooltip(monthBtn, Lang.noOfMonths, { placement: 'bottom' });
-    monthBtn.onclick = (event) => {
-      this.menu.showAtMouseEvent(event);
-      event.stopPropagation();
-    }
-
-    const updateBtn = buttonsEl.createDiv({ cls: 'clickable-icon nav-action-button' });
-    setIcon(updateBtn, 'refresh-cw');
-    setTooltip(updateBtn, Lang.updateView, { placement: 'bottom' });
-    updateBtn.onclick = () => {
-      this.updateView();
-    }
-
-    const settingsBtn = buttonsEl.createDiv({cls: 'clickable-icon nav-action-button' });
-    setIcon(settingsBtn, 'settings');
-    setTooltip(settingsBtn, Lang.openSettings, { placement: 'bottom' });
-    settingsBtn.onclick = () => {
-      this.openSettings();
-    }
-
-    const collapseBtn = buttonsEl.createDiv({cls: 'clickable-icon nav-action-button' });
-    setIcon(collapseBtn, 'chevrons-down-up');  // default
-    setTooltip(collapseBtn, Lang.collapseAllTip, { placement: 'bottom' }); //default
-    collapseBtn.onclick = () => {
-      this.collapsed = !this.collapsed;
-      this.contentEl
-        .querySelectorAll('.tree-item-children')
-        .forEach((el) => {
-          if (this.collapsed) {
-            el.addClass('is-collapsed');
-            setIcon(collapseBtn, 'chevrons-up-down');
-            setTooltip(collapseBtn, Lang.expandAllTip, { placement: 'bottom' });
-          } else {
-            el.removeClass('is-collapsed');
-            setIcon(collapseBtn, 'chevrons-down-up');
-            setTooltip(collapseBtn, Lang.expandAllTip, { placement: 'bottom' });
-          }
-        });
-    }
-    this.containerEl.parentElement.prepend(navEl); // Add at the top of the main view div
+  // Save state to workspace
+  getState() {
+    const state = super.getState();
+    state.lookup = this.searchboxEl.value;
+    state.history = this.history;
+    return state;
   }
 
-  /**
-   * 
-   * @param {EventRef} eventRef 
-   * @returns {void}
-   */
-  updateView(event) {
-    if (this === undefined) return; // duplicated events?
-    if (event instanceof WorkspaceLeaf && 
-      event.getViewState().type === LAST_MONTH_VIEW) return;
-
-    const { groups: groupHeaders, meta } = this.getRecentFiles();
-    
-    const contentEl = this.contentEl;
-    contentEl.empty();
-    contentEl.addClass('lmp');
-
-    // 🔆Header for the Total Count
-    const totalEl = createDiv({ cls: 'tree-item lmp-total' });
-    const titleEl = totalEl.createDiv({ cls: 'tree-item-self'});
-    setTooltip(titleEl, meta.last + ' — ' + meta.first);
-    const iconEl = titleEl.createDiv({ cls: 'tree-item-icon' });
-    setIcon(iconEl, 'calendar-range');
-    const innerEl = titleEl.createDiv({ cls: 'tree-item-inner' });
-    let title;
-    if (this.settings.months > 1) {
-      title = Lang.lastMonths.replace('{count}', this.settings.countMonths);
-    } else {
-      title = Lang.lastMonth; 
-    }
-    const textEl = innerEl.createSpan({ cls: 'tree-item-inner-text', text: title });
-    const flairEl = titleEl.createDiv({ cls: 'tree-item-flair-outer' });
-    flairEl.createSpan({ cls: 'tree-item-flair', text: meta.total });
-    setTooltip(flairEl, 
-      Lang.hiddenFolders + '\u{000A}—\u{000A}' + this.settings.hiddenFolders.replace('\n', '\u{000A}'));
-
-    contentEl.appendChild(totalEl);
-
-    let color = 0;
-    groupHeaders.forEach((hits, header) => {
-
-      // 🔆Headers for the Week Groups
-      const itemEl = contentEl.createDiv({ cls: 'tree-item' });
-      const headerEl = itemEl.createDiv({ cls: 'tree-item-self is-clickable ' });
-      setTooltip(headerEl, Lang.collapseTip, { placement: 'right' });
-      const iconEl = headerEl.createDiv({ cls: 'tree-item-icon' });
-      const innerEl = headerEl.createDiv({ cls: 'tree-item-inner' });
-      const textEl = innerEl.createSpan({
-        cls: 'tree-item-inner-text',
-        text: header.toUpperCase(),
-      });
-      const flairEl = headerEl.createDiv({ cls: 'tree-item-flair-outer' });
-      let count = hits.length;
-      flairEl.createSpan({ cls: 'tree-item-flair', text: count });
-      itemEl.addClass('lmp-header');
-      setIcon(iconEl, 'calendar');
-      if (this.settings.rainbow) {
-        textEl.addClass('lmp-color-' + (color % 8));
-        color++;
-      }
-      
-      // Enable Expand/Collapse of header
-      headerEl.onclick = (event) => {
-        event.preventDefault();
-        const collapsed = childrenEl.classList.toggle('is-collapsed');
-        const tip = (collapsed ? Lang.expandTip : Lang.expandTip);
-        setTooltip(headerEl, tip);
-      }
-      
-      // 🔆Children: Matching files for each Week header
-      const childrenEl = itemEl.createDiv({ cls: 'tree-item-children' });
-      hits.forEach(hit => {
-
-        const fileEl = childrenEl.createDiv({ cls: 'tree-item nav-file lmp-file' });
-        const tip = hit.path + 
-            '\u{000A}⇄ ' + new Date(hit.file?.stat.mtime).toLocaleString(DEFAULT_SETTINGS.dateLocale) + 
-            '\u{000A}\u{263C} ' + new Date(hit.file?.stat.ctime).toLocaleString(DEFAULT_SETTINGS.dateLocale);
-        setTooltip(fileEl, tip, { placement: 'right' });
-        const titleEl = fileEl.createDiv({
-          cls: 'tree-item-self is-clickable nav-file-title lmp-title',
-        });
-        const iconEl = titleEl.createDiv({ cls: 'tree-item-icon' });
-        const textEl = titleEl.createDiv({
-          cls: 'tree-item-inner nav-file-title-content lmp-title-content',
-          text: hit.name,
-        });
-        const icon = (hit.new ? 'file-plus-2' : 'file');
-        setIcon(iconEl, icon);
-
-        if (hit.active) {
-          titleEl.addClass('is-active');
-        }
-        if (hit.leaf) {
-          titleEl.addClass('is-open');
-        }
-
-        // Drag file to editor to create a link
-        titleEl.setAttr('draggable', 'true');
-        titleEl.addEventListener('dragstart', (event) => {
-          const file = this.app.metadataCache.getFirstLinkpathDest(hit.path, '');
-          const dragManager = this.app.dragManager;
-          const dragData = dragManager.dragFile(event, file);
-          dragManager.onDragStart(event, dragData);
-        });
-
-        // Trigger the file preview popover
-        titleEl.addEventListener('mouseover', (event) => {
-          this.app.workspace.trigger('hover-link', {
-            event,
-            source: LAST_MONTH_VIEW,
-            hoverParent: contentEl,
-            targetEl: fileEl,
-            linktext: hit.path,
-          });
-        });
-
-        // Add the extra open location options to the the file context menu
-        titleEl.addEventListener('contextmenu', (event) => {
-          const file = this.app.vault.getAbstractFileByPath(hit.path);
-          const menu = new Menu();
-          menu.addItem(item => {
-            item.setTitle(Lang.openTabLabel);
-            item.setIcon('file-plus');
-            item.setSection('open');
-            item.onClick(() => this.openFile(hit, false, options.tab));
-          });
-          menu.addItem(item => {
-            item.setTitle(Lang.openRightLabel);
-            item.setIcon('separator-vertical');
-            item.setSection('open');
-            item.onClick(() => this.openFile(hit, false, options.split));
-          });
-          this.app.workspace.trigger('file-menu', menu, file, '');
-          menu.showAtPosition({ x: event.clientX, y: event.clientY });
-        });
-
-        // Open a new tab/split/window on click
-        // TODO: open in a new tab if not already open? Difficult!
-        titleEl.addEventListener('click', (event) => {
-          this.openFile(hit, event.ctrlKey || event.metaKey);
-        });
-      });
-      contentEl.appendChild(childrenEl);
+  async onOpen() {
+    // SEARCH BAR
+    const rowEl = createDiv({ cls: 'search-row' });
+    const contEl = rowEl.createDiv({ cls: 'search-input-container' });
+    const searchboxEl = contEl.createEl('input', {
+      type: 'search',
+      placeholder: Lang.searchPlc,
     });
-    // TODO append list of open files for troubleshooting purposes (in small muted font)
-  }
-
-  buildMonthMenu() {
-    const menu = new Menu();
-    for (const [key, value] of Object.entries(Lang.monthOptions) ) {
-      menu.addItem(item => {
-        item.setTitle(value)
-        item.setIcon('calendar')
-        item.setChecked(key == this.settings.countMonths)
-        item.onClick(() => {
-          this.settings.countMonths = Number(value.substring(0, 1));
-          this.menu = this.buildMonthMenu();
-          this.plugin.saveSettings();
-          this.updateView();
-        });
-      });
-    }
-    return menu;
-  }
-
-  openSettings() {
-    this.app.setting.open();
-    this.app.setting.openTabById(this.plugin.manifest.id);
-  }
-
-  /**
-   * Open the provided file in the most recent leaf.
-   * @param {THit} hit
-   * @param {boolean} split 
-   * Should file be opened in a new split, or in the most recent split. 
-   * True if most recent split is pinned.
-   * @param {string} openType how should the tab be opened
-   * @returns {void}
-   */
-  openFile(hit, split = false, openType = null) {
-    // sanity check to be sure the file still exists
-    const targetFile = this.app.vault.getFileByPath(hit.file.path);
-    if (targetFile) {
-      // Is the file already open in a tab/window somewhere?
-      if (hit.leaf) {
-        this.app.workspace.setActiveLeaf(hit.leaf);
-      } else {
-        let leaf = this.app.workspace.getMostRecentLeaf();
-        const canCreateLeaf = split || leaf.getViewState().pinned;
-        if (canCreateLeaf) {
-          if (openType === options.split || this.plugin.settings.openType === 'split') {
-            leaf = this.app.workspace.getLeaf('split');
-          } else if (openType === options.window || this.plugin.settings.openType === 'window') {
-            leaf = this.app.workspace.getLeaf('window');
-          } else if (openType === options.tab || this.plugin.settings.openType === 'tab') {
-            leaf = this.app.workspace.getLeaf('tab');
-          }
-        }
-        leaf.openFile(targetFile);
-      }
-    }
-  }
-
-  /**
-   * @typedef {Object} THit
-   * @property {TFile} file
-   * @property {string} name
-   * @property {string} path
-   * @property {Date} date
-   * @property {Date} week
-   * @property {boolean} new
-   * @property {WorkspaceLeaf} leaf
-   * @property {string} type
-   * @property {boolean} active
-   */
-
-  ///** @typedef {Map<string, Array<THit>>} THits */
-
-  /**
-   * @typedef {Map} THits
-   * @property {string} header
-   * @property {Array<THit>}
-   */
-
-  /**
-   * Get created and modified files from recent months (setting)
-   * If a file was created and then modified in the same week then the created one is shown
-   * @returns {{THits, Object}} THits, meta: {first, last, total}
-   */
-  getRecentFiles() {
-    const today = new Date();
-    let cutoff = new Date();
-    cutoff.setMonth(cutoff.getMonth() - this.settings.countMonths);
-    const patterns = (this.settings.hiddenFolders ? this.settings.hiddenFolders.split('\n') : []);
-    const files = this.app.vault.getMarkdownFiles();
-    const active_file = this.app.workspace.getActiveFile();
-    const active_path = (active_file ? active_file.path : '');
-    const hide_file = hideFile.bind(this);
-    const meta = { 
-      first: today.toLocaleString('en-US', { month: 'short', day: 'numeric' }), // e.g. "May 10"
-      last: cutoff.toLocaleString('en-US', { month: 'short', day: 'numeric' }), 
-      total: 0 
-    };
-    this.hiddenFiles = {};
-    const openTabs = this.getOpenTabs();
-
-    const hits = files
-      .filter((file) => {
-        const include = !hide_file(file.path) && 
-          (file.stat.ctime > cutoff || file.stat.mtime > cutoff);
-        return include;
-        })
-      .map((file) => {
-        const cweek = getMonday(file.stat.ctime);
-        const mweek = getMonday(file.stat.mtime);
-        const isNew = (cweek === mweek); // created during this week
-        const leaf = openTabs[file.path]?.leaf ?? null;
-        const active = openTabs[file.path]?.active ?? false;
-        /** @type {THit} */
-        const hit = {
-          file: file,
-          name: file.basename,
-          path: file.path,
-          date: file.stat.mtime,
-          week: mweek,
-          new: isNew,
-          leaf: leaf,
-          type: 'file',
-          active: active,
-        }
-        return hit;
-      })
-      .sort((a, b) => b.date - a.date);
-
-    /** @type {THits} */
-    const groups = new Map();
-    meta.total = hits.length;
-    hits.forEach((hit) => {
-      const hdr = getHeader(hit.week);
-      if (!groups.has(hdr)) {
-        groups.set(hdr, []);
-      }
-      groups.get(hdr).push(hit);
+    this.searchboxEl = searchboxEl;
+    const clearEl = contEl.createDiv({
+      cls: 'search-input-clear-button',
     });
-    return { groups, meta };
+    setTooltip(clearEl, Lang.clearTip);
+    const cursorBtn = rowEl.createDiv({ cls: 'clickable-icon pbv-cursor-icon' });
+    setIcon(cursorBtn, 'text-cursor-input');
+    setTooltip(cursorBtn, Lang.findCursorTip, { placement: 'bottom' });
+    this.containerEl.prepend(rowEl);  // place at top to ensure it stays fixed
+
+    // PLUGIN CONTENT CONTAINER
+    this.contentEl.empty();
+    this.contentEl.addClass('pbv');
+
+    // START VIEW
+    const introEl = this.contentEl.createDiv();
+    const historyEl = introEl.createEl('div', { cls: 'pbv-history'});
+    this.historyEl = historyEl;
     
+    // SEARCHING MESSAGE VIEW
+    const searchingEl = this.contentEl.createDiv({
+      cls: 'pbv-message',
+      text: Lang.searching,
+    });
+    searchingEl.hide();
+    
+    // RESULTS VIEW
+    const resultEl = this.contentEl.createDiv({ cls: 'pbv-results' });
+    
+    // HELP TOGGLE
+    const detailsEl = createEl('details');
+    detailsEl.createEl('summary', { text: Lang.help });
+    detailsEl.createEl('p', { text: Lang.intro });
+    const detailEl = detailsEl.createEl('ul');
+    detailEl.createEl('li', { text: Lang.findCursorTxt });
+    detailEl.createEl('li', { text: Lang.copyVerseTxt });
+    const wipeEl = detailEl.createEl('li', { text: Lang.clearTxt, cls: 'clear-history' });
+
+    this.contentEl.append(detailsEl);
+
+
     /* ⚒️ INTERNAL FUNCTIONS */
 
-    // memoize the header to save a few ms
-    function getHeader(week, cache = {}) {
-      if (week in cache) return cache(week);
-      const sow = new Date(week);
-      const eow = addDays(sow, 6);
-      const bom = sow.toLocaleString('en-US', { month: 'short' });
-      const eom = eow.toLocaleString('en-US', { month: 'short' });
-      const xmth = (bom === eom) ? '' : '\u{2008}' + eom; // 2008 = punc. space
-      cache[week] = bom + ' ' + sow.getDate() + '\u{2009}\u{2013}' + xmth + ' ' + eow.getDate();  // 2009 = hairspace
-      return cache[week];
-    }
-
-    function addDays(date, days) {
-      let result = new Date(date);
-      result.setDate(result.getDate() + days);
-      return result;
-    }
-    // the first day of the week (Monday by default)
-    function getMonday(date) {
-      date = new Date(date);
-      const day = date.getDay();
-      const diff = date.getDate() - day + (day == 0 ? -6 : 1); // adjust when day is sunday
-      return new Date(date.setDate(diff)).toDateString();
-    }
-
-    function hideFile(path) {
-      let hidden = false
-      if (patterns) {
-        hidden = patterns.some((pattern) => {
-          let match;
-          let valid;
-          if (!pattern) {
-            match = false;
-          } else {
-            try {
-              match = new RegExp(pattern).test(path);
-              valid = true;
-            } catch(error) {
-              match = true;
-              valid = false;
-            }
+    /**
+     * Display the verse list in the sidebar
+     * Displays a notice for invalid verses
+     * Used by the events below
+     * @param {string} lookup Must be a full, valid scripture reference
+     */
+    const showResults = async (lookup) => {
+      if (lookup !== '') {
+        searchboxEl.value = lookup;
+        searchboxEl.addClass('pbv-active-verse');
+        introEl.hide();
+        let results = [];
+        /** @type {TLookup} */
+        const cache = this.getFromHistory(lookup);
+        if (cache) {
+          results = cache.results;
+        } else {
+          searchingEl.show();
+          results = await this.fetchBibleVersions(lookup);
+          searchingEl.hide();
+        }
+        if (results) {
+          resultEl.empty();
+          for (const { version, text } of results) {
+            const rowEl = resultEl.createDiv({ cls: 'pbv-row' });
+            rowEl.createSpan({ text: version, cls: 'pbv-ver' });
+            rowEl.createSpan({ text: text, cls: 'pbv-text' });
           }
-          if (match) {
-            if (!this.hiddenFiles[pattern]) this.hiddenFiles[pattern] = '';
-            if (valid) {
-              this.hiddenFiles[pattern] += '  — ' + path + '\n';
-            } else {
-              this.hiddenFiles[pattern] = '  — ' + Lang.invalidRegex + '\n';
-            }
-          }
-          return match;
-        });
-      }
-      return hidden;
-    }
-  }
-
-  getOpenTabs() {
-    const openTabs = {};
-    const activeId = this.app.workspace.getMostRecentLeaf().id;
-    for (let leaf of this.app.workspace.getLeavesOfType('markdown')) {
-      openTabs[leaf.view.getState().file] = {
-        leaf: leaf,
-        active: leaf.id === activeId,
+          resultEl.createDiv({ text: '🔹' });
+          this.addToHistory(lookup, results);
+          this.showHistory();
+        } else {
+          resultEl.createDiv({ text: Lang.noResult, cls: 'pbv-none' });
+        }
+      } else {
+        new Notice(Lang.invalidScripture, Config.delay);
       }
     }
-    return openTabs;
-  }
-}
+    
+    /* EVENTS */
+ 
+    // three different ways to trigger a search
 
-class LastMonthSettingTab extends PluginSettingTab {
-  constructor(app, plugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-    this.hiddenPreview = undefined;
-  }
-  display() {
-    const hiddenFiles = () => {
-      let folders = '';
-      Object.entries(this.plugin.view.hiddenFiles).forEach(([key, value]) => {
-        folders += '▶ ' + key + ' ◀\n' + value + '\n';
-      });
-      return folders;
+    searchboxEl.onsearch = async () => {
+      const lookup = this.getScriptureFromSearch(searchboxEl.value);
+      showResults(lookup);
+    };   
+
+    cursorBtn.onclick = () => {
+      const view = this.app.workspace.getMostRecentLeaf().view;
+      const lookup = this.getScriptureAtCursor(view);
+      showResults(lookup);
+    };
+    
+    clearEl.onclick = (event) => {
+      searchboxEl.removeClass('pbv-active-verse');
+      searchboxEl.value = '';
+      resultEl.empty();
+      introEl.show();
+    };
+
+    historyEl.onclick = (event) => {
+      if (event.target.tagName === 'SPAN') {
+        showResults(event.target.textContent);
+      }
     }
 
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.addClass('lmp-settings');
+    wipeEl.onclick = () => {
+      this.clearHistory();
+      clearEl.onclick();
+    }
 
-    new Setting(containerEl)
-      .setName('Number of months')
-      .setDesc(
-        'Number of recent months to show'
-      )
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOptions(Lang.monthOptions)
-          .setValue(this.plugin.settings.countMonths)
-          .onChange(async (value) => {
-            this.plugin.settings.countMonths = value;
-            await this.plugin.saveSettings();
-            this.plugin.view.updateView();
-          })
-      });
-
-    new Setting(containerEl)
-      .setName('Default open location')
-      .setDesc(
-        'When a note is clicked should it open in a new tab, split, or window (desktop only)'
-      )
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOptions(Lang.openTypeOptions)
-          .setValue(this.plugin.settings.openType)
-          .onChange(async (value) => {
-            this.plugin.settings.openType = value;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(containerEl)
-      .setName('Rainbow headers')
-      .setDesc('Alternate header colors between the default theme base colours')
-      .addToggle((tog) => {
-        tog
-          .setValue(this.plugin.settings.rainbowHeaders)
-          .onChange(async (value) => {
-            this.plugin.settings.rainbowHeaders = value;
-            await this.plugin.saveSettings();
-            this.plugin.view.updateView();
-          });
-      })
-
-    new Setting(containerEl)
-      .setName('Hide folders or files')
-      .setDesc('Use regular expression patterns to hide certain folders and files. You can add one per line. Check your results in the list below.')
-      .addTextArea((text) => {
-        text
-          .setPlaceholder('^daily/\n\\.png$\nfoobar.*baz')
-          .setValue(this.plugin.settings.hiddenFolders)
-          .onChange(debounce(async (value) => {
-            this.plugin.settings.hiddenFolders = value;
-            this.plugin.saveSettings();
-            this.plugin.view.updateView();
-            this.hiddenPreview.setValue(hiddenFiles());
-          }, 1000, true));
-      });
-
-      
-    new Setting(containerEl)
-      .setName('Preview of hidden files or folders')
-      .setDesc('For checking purposes.\u{000A}A list of all the hidden folders matched by the above regular expressions.\u{000A}Also shows invalid expressions so that you can correct them.')
-      .addTextArea((text) => {
-        text.setValue(hiddenFiles());
-        this.hiddenPreview = text;  // hold a class ref for updates
-        text.inputEl.setCssProps({ height: "20em"});
-      });
+    resultEl.onclick = (event) => {
+      if (event.target.className === 'pbv-text') {
+        navigator.clipboard.writeText(
+          `${event.target.textContent}\n*${event.target.previousSibling.textContent.trim()}*`);
+        new Notice(Lang.copiedVerseMsg, 2000);
+      }
+    }
   }
+  
+  async onClose() {
+    this.unload();
+  }
+  
+  /* 🕒 HISTORY FUNCTIONS */
+
+  /** @typedef {{ lookup: string, results: Array }} TLookup */
+
+  showHistory() {
+    this.historyEl.empty();
+    for (const item of this.history) {
+      this.historyEl.createEl('span', { text: item.lookup });
+    }
+  }
+
+  addToHistory(lookup, results) {
+    /** @type {TLookup} */
+    const newItem = { lookup, results };
+    this.history = this.history.filter(item => lookup !== item.lookup); // no duplicates
+    this.history = [newItem, ...this.history]; // add to the top
+    if (this.history.length > this.settings.maxHistory) {
+      this.history = this.history.slice(0, this.settings.maxHistory);
+    }
+  }
+
+  getFromHistory(lookup) {
+    const cache = this.history.find((item) => item.lookup === lookup);
+    return cache;
+  }
+
+  clearHistory() {
+    this.history = [];
+    this.getState();
+    this.showHistory();
+  }
+
+  /* 📦 INTERNAL FUNCTIONS */
+  
+  /**
+   * Try to validate a scripture reference entered by user into search box
+   *
+   * @param {string} input
+   * @returns {string} validated scripture reference; empty if no match
+   */
+  getScriptureFromSearch(input) {
+    /** @type {import('jwl.d.ts').TReference} */
+    const match = this.jwl.getAllScriptureLinks(input, this.jwl.DisplayType.find);
+    return match ? match.passages[0].display : '';
+  }
+
+  /**
+   * Try to find and validate a scripture reference from the cursor position
+   *
+   * @param {obsidian.View} view current editor view
+   * @returns {string} validated scripture reference; empty if no match
+   */
+  getScriptureAtCursor(view) {
+    let lookup = '';
+    if (view) {
+      const offset = 25; // ± overlap based on longest scripture reference I can think of
+      const editor = view.editor;
+      const cursor = editor.getCursor();
+      const line = editor.getLine(cursor.line);
+      let caret = cursor.ch;
+      const begin = caret - offset < 0 ? 0 : caret - offset;
+      const end = caret + offset > line.length ? line.length : caret + offset;
+      caret -= begin;
+      const fragment = line.slice(begin, end);
+      /** @type {import('jwl.d.ts').TReference} */
+      const match = this.jwl.getAllScriptureLinks(fragment, this.jwl.DisplayType.find, caret);
+      lookup = match ? match.passages[0].display : '';
+    } else {
+      new Notice(Lang.noEditor, Config.delay);
+    }
+    return lookup;
+  }
+
+  /**
+   * Fetch the bible versions for the input scripture
+   * @param {string} lookup Scripture, must be full and valid!
+   * @returns {array|null} innerHTML of each version of the verse, null on failure
+   */
+  async fetchBibleVersions(lookup) {
+    const url = Config.url + lookup;
+    const results = [];
+    try {
+      const res = await requestUrl(url);
+      if (res.status === 200) {
+        const source = res.text;
+        const dom = new DOMParser().parseFromString(source, 'text/html');
+        const versions = dom.querySelectorAll('.singleverse-row');
+        for (const elem of versions) {
+          results.push(this.extractPlainText(elem.innerHTML));
+        }
+        return results;
+      }
+    } catch (error) {
+      // biome-ignore lint: ; // ⚠️
+      console.log(error);
+    }
+    return null;
+  }
+
+  /**
+   * Extracts the plain text from the html markup
+   * Separates the version abbreviation from the text
+   * Builds a full version name (abbr. + full name)
+   * 
+   * @param {string} html html markup
+   * @returns {{version, text}} bible version name, full text of verse
+   */
+  extractPlainText(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    let version = doc.body.childNodes[0].textContent ?? '';
+    version = Config.sep1 + version + Config.sep2 + BibleVersions[version] ?? '';
+    let text = doc.body.childNodes[1].textContent ?? '';
+    text = text.replace('¶', '');
+    return { version, text };
+  }
+
 }
 
+const BibleVersions = {
+  AKJV: 'Authorized (King James) Version',
+  AMP: 'Amplified Bible ',
+  AMPC: 'Amplified Bible, Classic Edition ',
+  ASV: 'American Standard Version ',
+  BRG: 'BRG Bible ',
+  CEB: 'Common English Bible ',
+  CEV: 'Contemporary English Version ',
+  CJB: 'Complete Jewish Bible ',
+  CSB: 'Christian Standard Bible ',
+  DARBY: 'Darby Translation ',
+  DLNT: 'Disciples’ Literal New Testament ',
+  DRA: 'Douay-Rheims 1899 American Edition ',
+  EASY: 'EasyEnglish Bible ',
+  EHV: 'Evangelical Heritage Version ',
+  ERV: 'Easy-to-Read Version ',
+  ESV: 'English Standard Version ',
+  ESVUK: 'English Standard Version Anglicised ',
+  EXB: 'Expanded Bible ',
+  GNT: 'Good News Translation ',
+  GNV: '1599 Geneva Bible ',
+  GW: 'GOD’S WORD Translation ',
+  HCSB: 'Holman Christian Standard Bible ',
+  ICB: 'International Children’s Bible ',
+  ISV: 'International Standard Version ',
+  JUB: 'Jubilee Bible 2000 ',
+  KJ21: 'Century King James Version ',
+  KJV: 'King James Version ',
+  LEB: 'Lexham English Bible ',
+  LSB: 'Legacy Standard Bible ',
+  MEV: 'Modern English Version ',
+  MOUNCE: 'Mounce Reverse Interlinear New Testament ',
+  MSG: 'The Message ',
+  NABRE: 'New American Bible (Revised Edition) ',
+  NASB: 'New American Standard Bible ',
+  NASB1995: 'New American Standard Bible 1995 ',
+  NCB: 'New Catholic Bible ',
+  NCV: 'New Century Version ',
+  NET: 'New English Translation ',
+  NIRV: "New International Reader's Version ",
+  NIV: 'New International Version ',
+  NIVUK: 'New International Version - UK ',
+  NKJV: 'New King James Version ',
+  NLT: 'New Living Translation ',
+  NLV: 'New Life Version ',
+  NMB: 'New Matthew Bible ',
+  NOG: 'Names of God Bible ',
+  NRSVA: 'New Revised Standard Version, Anglicised ',
+  NRSVACE: 'New Revised Standard Version, Anglicised Catholic Edition ',
+  NRSVCE: 'New Revised Standard Version Catholic Edition ',
+  NRSVUE: 'New Revised Standard Version Updated Edition ',
+  NTFE: 'New Testament for Everyone ',
+  OJB: 'Orthodox Jewish Bible ',
+  PHILLIPS: 'J.B. Phillips New Testament ',
+  RGT: 'Revised Geneva Translation ',
+  RSV: 'Revised Standard Version ',
+  RSVCE: 'Revised Standard Version Catholic Edition ',
+  TLB: 'Living Bible ',
+  TLV: 'Tree of Life Version ',
+  VOICE: 'The Voice ',
+  WE: 'Worldwide English (New Testament)',
+  WEB: 'World English Bible ',
+  WYC: 'Wycliffe Bible ',
+  YLT: "Young's Literal Translation ",
+};
 
 module.exports = {
-  default: LastMonthPlugin,
-}
+  default: BibleVersionPlugin,
+};

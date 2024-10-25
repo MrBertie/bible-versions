@@ -1,71 +1,148 @@
-.lmp {
-  padding: 4px 8px 32px !important;
-}
-
-.lmp-total {
-  border: 1.5px solid var(--background-modifier-border);
-  border-radius: 4px;
-  color: var(--text-muted);
-  letter-spacing: 0.65px !important;
-  margin-top: 8px;
-  padding-top: 2px;
-  .tree-item-inner-text {
-    font-size: 1.12em;
+[data-type="bible-version-view"] {
+  .search-row .search-input-container {
+    width: 100%;
   }
-}
-
-.lmp-header {
-  margin-top: 4px;
-}
-  
-.lmp-header .tree-item-inner-text {
-  color: var(--text-normal);
-  font-size: 1.1em;
-}
-    
-.lmp-title {
-  justify-content: space-between;
-  align-items: unset;
-  &.is-open {
-    color: var(--text-normal);
-  }
-  &.is-active {
+  .pbv-active-verse {
+    font-size: var(--font-ui-medium);
     color: var(--text-accent);
+    border-color: var(--background-modifier-border-focus);
   }
-}
-
-.lmp-title-content {
-  flex-grow: 1;
-}
-
-.lmp .tree-item-children.is-collapsed {
-  max-height: 0;
-  overflow: hidden;
-  transition: max-height 0.5s ease !important;
-}
-
-.tree-item-inner-text.lmp-color-0 { color: var(--color-red); }
-.tree-item-inner-text.lmp-color-1 { color: var(--color-orange); }
-.tree-item-inner-text.lmp-color-2 { color: var(--color-yellow); }
-.tree-item-inner-text.lmp-color-3 { color: var(--color-green); }
-.tree-item-inner-text.lmp-color-4 { color: var(--color-cyan); }
-.tree-item-inner-text.lmp-color-5 { color: var(--color-blue); }
-.tree-item-inner-text.lmp-color-6 { color: var(--color-purple); }
-.tree-item-inner-text.lmp-color-7 { color: var(--color-pink); }
-
-
-.lmp-settings {
-  textarea {
-    resize: none;
-    width: 20em;
-    height: 8em;
-  }
-}
-
-body.is-phone {
-  .lmp-settings {
-    textarea {
-      width: 100%;
+  .pbv-cursor-icon {
+    width: 50px;
+    &:hover {
+      color: var(--text-normal);
+      background-color: var(--background-modifier-active-hover);
+      border: 1px solid var(--background-modifier-border-hover);
     }
   }
 }
+
+.pbv {
+  padding: 4px 12px 32px 16px !important;
+
+  :is(.pbv-info, .pbv-none) {
+    margin: 16px 0 8px;
+  }
+
+  .pbv-results {
+    counter-reset: part 0;
+    max-height: inherit;
+  }
+  
+  details {
+    border-top: 1px solid var(--background-modifier-border);
+    color: var(--text-muted);
+    font-size: var(--font-smaller);
+    padding: 6px 8px 8px 12px;
+  }
+  
+  summary {
+    color: var(--text-muted);
+    &:hover {
+      color: var(--text-normal);
+    }
+  }
+  
+  details[open] {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding-left: 11px;
+    p {
+      margin: 8px 0 4px;
+    }
+    ul {
+      margin: 0px;
+      padding-inline-start: 1.8em;
+      li {
+        color: var(--text-muted);
+        list-style-position: outside;
+        padding: 4px 0px;
+      }
+    }
+  }
+  
+  .clear-history:hover {
+    color: var(--text-normal);
+  }
+
+  .pbv-history {
+    margin: 4px 0 20px;
+    span {
+      color: var(--text-muted);
+      font-size: var(--font-ui-smaller);
+      padding: 6px 8px 6px 8px;
+    }
+  }
+  
+  .pbv-source {
+    color: var(--text-faint);
+    font-size: var(--font-smaller);
+    margin: 4px 0 8px 0.5em;
+  }
+  
+  .pbv-button {
+    color: var(--text-muted);
+    width: 100%;
+    &:hover {
+      color: var(--text-normal);
+      background-color: var(--background-modifier-active-hover);
+    }
+  }
+  
+  .pbv-message {
+    color: var(--text-muted);
+    font-size: var(--font-smaller);
+    margin-bottom: 2em;
+  }
+  
+  .pbv-none {
+    color: var(--text-faint);
+    text-decoration: line-through;
+  }
+
+  .pbv-row {
+    color: var(--text-muted);
+    margin: 4px 0 4px;
+    padding: 2px 0;
+    user-select: text !important;
+    -webkit-user-select: text !important;
+  }
+
+  :is(.pbv-text, .pbv-ver, .pbv-history span) {
+    display: inline-block;
+  }
+
+  .pbv-text {
+    color: var(--text-normal);
+    /* font-family: var(--font-text); */
+    padding: 2px 8px 4px 8px;
+  }
+
+  :is(.pbv-text, .pbv-history span) {
+    &:hover {
+      color: var(--text-normal);
+      background: var(--background-modifier-active-hover);
+      border-radius: 4px;
+    }
+  }
+
+  .pbv-ver {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    padding: 4px 0 2px;
+    &::before {
+      counter-increment: part 1;
+      content: counter(part);
+      font-weight: bolder;
+    }
+  }
+}
+
+body:not(.is-mobile) {
+  .pbv {
+    .pbv-text {
+      font-size: var(--font-smaller);
+    }
+  }
+}
+
